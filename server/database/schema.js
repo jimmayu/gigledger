@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,12 +56,24 @@ export const SCHEMA = {
 // Initialize database connection and schema
 let db;
 
-export function initDatabase(dbPath = path.join(__dirname, '../../../data/ledger.db')) {
+export function initDatabase(dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../../../data/ledger.db')) {
   try {
     console.log('Database path:', dbPath);
     console.log('__dirname:', __dirname);
     console.log('Resolved path:', path.resolve(dbPath));
-    console.log('Directory exists:', require('fs').existsSync(path.dirname(dbPath)));
+    console.log('Environment DATABASE_PATH:', process.env.DATABASE_PATH);
+
+    // Ensure the directory exists
+    const dbDir = path.dirname(dbPath);
+    console.log('Database directory:', dbDir);
+    if (!fs.existsSync(dbDir)) {
+      console.log('Creating database directory...');
+      fs.mkdirSync(dbDir, { recursive: true });
+      console.log('Database directory created');
+    } else {
+      console.log('Database directory exists');
+    }
+
     db = new Database(dbPath);
 
     // Enable foreign keys
