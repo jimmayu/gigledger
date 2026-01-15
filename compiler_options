@@ -1,0 +1,37 @@
+# Compiler Options & Development Notes
+
+## Environment Variables Required for Production
+- APP_PASSWORD: bcrypt hashed password for API authentication
+- NODE_ENV: production/development
+- Database: SQLite file (ledger.db) will be auto-created on first run
+
+## Key Technical Decisions
+- NO TypeScript (sticking to JavaScript ES modules per requirements)
+- Currency stored as INTEGER cents (avoiding floating point precision issues)
+- SQLite with WAL mode for better concurrent access in development
+- bcrypt with 12 salt rounds for password hashing
+
+## Architecture Patterns
+- Separation of concerns: logic/db/routes in separate directories
+- Modularity: Depreciation calculations isolated from API endpoints
+- Event-driven: React state updates trigger API calls and re-renders
+
+## Pending Considerations (if future development)
+- Error handling can be more granular (custom error classes)
+- Rate limiting for API endpoints (production hardening)
+- Input validation could use a schema library (joi, yup)
+- Database migrations system if schema changes needed
+- Logging system (winston, pino) for production monitoring
+- Caching layer (Redis) if performance becomes bottleneck
+
+## UI Framework Notes
+- Tailwind CSS with custom utilities (extend config)
+- Mobile-first responsive design (320px+ breakpoints)
+- PWA manifest and service worker placeholders in place
+- Minimal animations/transitions for iOS/Android native feel
+
+## Deployment Ready Features
+- Multi-stage Dockerfile (React build -> Express + Nginx)
+- docker-compose.yml with Traefik labels ready
+- Environment variable driven configuration
+- Health check endpoints (/health)
