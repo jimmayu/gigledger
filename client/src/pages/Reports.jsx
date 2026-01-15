@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function Reports() {
   const [summary, setSummary] = useState(null)
   const [taxYear, setTaxYear] = useState(new Date().getFullYear())
@@ -11,7 +13,7 @@ export default function Reports() {
 
   const loadReportData = async () => {
     try {
-      const response = await fetch(`/api/summary?year=${taxYear}`)
+      const response = await fetch(`${API_BASE}/summary?year=${taxYear}`)
       if (response.ok) {
         const data = await response.json()
         setSummary(data)

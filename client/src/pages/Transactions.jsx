@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import TransactionModal from '../components/modals/TransactionModal.jsx'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function Transactions() {
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -20,7 +22,7 @@ export default function Transactions() {
   const loadTransactions = async () => {
     try {
       const params = new URLSearchParams(filters)
-      const response = await fetch(`/api/transactions?${params}`)
+      const response = await fetch(`${API_BASE}/transactions?${params}`)
       if (response.ok) {
         let data = await response.json()
         // Convert cents to dollars for display
@@ -48,7 +50,7 @@ export default function Transactions() {
     if (!confirm('Are you sure you want to delete this transaction?')) return
 
     try {
-      const response = await fetch(`/api/transactions/${transactionId}`, {
+      const response = await fetch(`${API_BASE}/transactions/${transactionId}`, {
         method: 'DELETE'
       })
       if (response.ok) {

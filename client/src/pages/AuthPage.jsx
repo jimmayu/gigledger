@@ -1,5 +1,7 @@
 import { useState } from 'react'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function AuthPage({ onLogin }) {
   const [isLogin, setIsLogin] = useState(true)
   const [formData, setFormData] = useState({
@@ -15,7 +17,7 @@ export default function AuthPage({ onLogin }) {
     setError('')
 
     try {
-      const endpoint = isLogin ? '/api/auth/login' : '/api/auth/register'
+      const endpoint = isLogin ? `${API_BASE}/auth/login` : `${API_BASE}/auth/register`
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: {

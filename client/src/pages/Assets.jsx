@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import AssetModal from '../components/modals/AssetModal.jsx'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function Assets() {
   const [assets, setAssets] = useState([])
   const [loading, setLoading] = useState(true)
@@ -14,7 +16,7 @@ export default function Assets() {
 
   const loadAssets = async () => {
     try {
-      const response = await fetch(`/api/assets?year=${taxYear}`)
+      const response = await fetch(`${API_BASE}/assets?year=${taxYear}`)
       if (response.ok) {
         let data = await response.json()
         // Convert cents to dollars (depreciation already calculated on server)
@@ -49,7 +51,7 @@ export default function Assets() {
     if (!sellDate || !sellPrice) return
 
     try {
-      const response = await fetch(`/api/assets/${assetId}/sell`, {
+      const response = await fetch(`${API_BASE}/assets/${assetId}/sell`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -69,7 +71,7 @@ export default function Assets() {
     if (!confirm('Are you sure you want to delete this asset?')) return
 
     try {
-      const response = await fetch(`/api/assets/${assetId}`, { method: 'DELETE' })
+      const response = await fetch(`${API_BASE}/assets/${assetId}`, { method: 'DELETE' })
       if (response.ok) {
         loadAssets()
       }

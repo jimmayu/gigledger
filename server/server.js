@@ -21,6 +21,10 @@ try {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// When deployed behind Traefik with PathPrefix(`/gigledger`), requests arrive as
+// /gigledger/... so we mount API routes at both locations.
+const API_BASES = ['/api', '/gigledger/api'];
+
 // Middleware
 app.use(cors({
   origin: true, // Allow all origins in development
@@ -30,15 +34,17 @@ app.use(express.json());
 app.use(cookieParser());
 
 // API routes
-app.use('/api', apiRoutes);
+for (const base of API_BASES) {
+  app.use(base, apiRoutes);
+}
 
 // Health check
-app.get('/api/health', (req, res) => {
+app.get(API_BASES.map(base => `${base}/health`), (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
 // User registration
-app.post('/api/auth/register', async (req, res) => {
+app.post(API_BASES.map(base => `${base}/auth/register`), async (req, res) => {
   try {
     const db = initDatabase(); // Get database instance
     const { username, password } = req.body;
@@ -72,7 +78,7 @@ app.post('/api/auth/register', async (req, res) => {
 });
 
 // User login
-app.post('/api/auth/login', async (req, res) => {
+app.post(API_BASES.map(base => `${base}/auth/login`), async (req, res) => {
   try {
     const db = initDatabase(); // Get database instance
     const { username, password } = req.body;
@@ -113,13 +119,13 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Logout
-app.post('/api/auth/logout', (req, res) => {
+app.post(API_BASES.map(base => `${base}/auth/logout`), (req, res) => {
   res.clearCookie('user_id');
   res.json({ message: 'Logout successful' });
 });
 
 // Get current user
-app.get('/api/auth/me', (req, res) => {
+app.get(API_BASES.map(base => `${base}/auth/me`), (req, res) => {
   const userId = req.cookies?.user_id;
   if (!userId) {
     return res.status(401).json({ error: 'Not authenticated' });
@@ -133,6 +139,19 @@ app.get('/api/auth/me', (req, res) => {
 
   res.json({ user });
 });
+
+// Serve the built frontend when running in production
+if (process.env.NODE_ENV === 'production') {
+  const distPath = path.join(__dirname, '..', 'dist');
+
+  // Serve assets at /gigledger/*
+  app.use('/gigledger', express.static(distPath, { index: false }));
+
+  // SPA fallback: let React Router handle client-side routes
+  app.get(['/gigledger', '/gigledger/', '/gigledger/*'], (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
+  });
+}
 
 // Start server
 app.listen(PORT, () => {

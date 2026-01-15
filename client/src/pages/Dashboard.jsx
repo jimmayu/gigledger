@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { PlusIcon, ChartBarIcon, ArrowUpIcon, ArrowDownIcon } from '@heroicons/react/24/outline'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -14,7 +16,7 @@ export default function Dashboard() {
 
   const loadSummary = async () => {
     try {
-      const response = await fetch(`/api/summary?year=${taxYear}`)
+      const response = await fetch(`${API_BASE}/summary?year=${taxYear}`)
       if (response.ok) {
         const data = await response.json()
         setSummary(data)

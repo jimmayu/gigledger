@@ -7,6 +7,8 @@ import Assets from './pages/Assets.jsx'
 import Reports from './pages/Reports.jsx'
 import NavBar from './components/NavBar.jsx'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -17,7 +19,7 @@ function App() {
 
   const checkAuthStatus = async () => {
     try {
-      const response = await fetch('/api/auth/me')
+      const response = await fetch(`${API_BASE}/auth/me`)
       if (response.ok) {
         const data = await response.json()
         setUser(data.user)
@@ -35,7 +37,7 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' })
+      await fetch(`${API_BASE}/auth/logout`, { method: 'POST' })
       setUser(null)
     } catch (error) {
       console.error('Logout failed:', error)

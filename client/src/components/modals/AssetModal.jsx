@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function AssetModal({ asset, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     name: '',
@@ -51,7 +53,7 @@ export default function AssetModal({ asset, onSave, onCancel }) {
       }
 
       const method = asset ? 'PUT' : 'POST'
-      const url = asset ? `/api/assets/${asset.id}` : '/api/assets'
+      const url = asset ? `${API_BASE}/assets/${asset.id}` : `${API_BASE}/assets`
 
       const response = await fetch(url, {
         method,

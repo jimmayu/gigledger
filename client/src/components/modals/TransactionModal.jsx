@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react'
 
+const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
+
 export default function TransactionModal({ transaction, onSave, onCancel }) {
   const [formData, setFormData] = useState({
     date: '',
@@ -74,7 +76,7 @@ export default function TransactionModal({ transaction, onSave, onCancel }) {
       }
 
       const method = transaction ? 'PUT' : 'POST'
-      const url = transaction ? `/api/transactions/${transaction.id}` : '/api/transactions'
+      const url = transaction ? `${API_BASE}/transactions/${transaction.id}` : `${API_BASE}/transactions`
 
       const response = await fetch(url, {
         method,
