@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+# Ignore data directory but allow specific data files needed for the application
+data/
+!server/data/
+.DS_Store
+client/node_modules/
+docker-compose.yml
