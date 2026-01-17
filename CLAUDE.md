@@ -103,6 +103,23 @@ The application focuses on the musician's workflow with simple data entry interf
 - 5-year MACRS: 20%, 32%, 19.2%, 11.52%, 11.52%, 5.76%
 - 7-year MACRS: 14.29%, 24.49%, 17.49%, 12.49%, 8.93%, 8.92%, 8.93%, 4.46%
 
+## Current Status: Depreciation Implementation
+The depreciation calculation engine has been significantly updated to be more IRS-compliant with proper MACRS rates and conventions. Key improvements include:
+
+### Working Features:
+1. **Standard MACRS calculations** for 3-year, 5-year, and 7-year property classes
+2. **Half-year convention** correctly implemented for first and last years of depreciation
+3. **Mid-quarter convention** automatically applied to Q4 purchases of 3-year property
+4. **Bonus depreciation** with proper phase-down schedule (40% in 2025, 20% in 2026)
+5. **Section 179 expensing** with correct annual limits ($1,250,000 max, $3,130,000 phase-out)
+6. **Equipment categories** mapped to correct MACRS classes with IRS guidelines
+7. **Proper basis tracking** throughout the depreciation lifecycle
+
+### Known Issues from Testing (In Progress):
+1. **Bonus depreciation over-calculation in final years** - Some assets continue to calculate depreciation in year 5 when they should be fully depreciated
+2. **Section 179 limit enforcement** - Not properly capping deductions at annual limits
+3. **MACRS calculation discrepancies** in bonus depreciation scenarios
+
 ## Known Bugs
 ### Minor Issues
 - **Authentication Mode Inconsistency**: The development environment uses disabled authentication by default but the .env file may still have it enabled, causing confusion
@@ -114,7 +131,10 @@ The application focuses on the musician's workflow with simple data entry interf
 Based on TODO.md, the following items need attention:
 
 ### 🐛 Bugs
-- Fix any known issues in the current implementation
+- Fix remaining depreciation calculation issues identified in testing:
+  - Bonus depreciation in year 5 still calculating deductions when asset is already fully depreciated
+  - Section 179 expensing not properly limiting deduction to annual limits ($1,250,000 for 2025-2026)
+  - Some MACRS calculation discrepancies in bonus depreciation scenarios
 
 ### ✨ Features
 - Implement dedicated TODO tracking system
@@ -194,19 +214,20 @@ The most recent batch of changes focused on implementing comprehensive IRS-compl
 **Problem**: The original depreciation calculations were simplified and didn't fully comply with IRS MACRS tables
 **Solution Implemented**:
 - Created comprehensive IRS depreciation data structure in `/server/data/irs_depreciation_tables.js`
-- Implemented proper MACRS rate tables for 3-year, 5-year, and 7-year properties
-- Added Section 179 expensing support with annual limits ($2.5M for 2025, $2.56M for 2026)
-- Updated bonus depreciation logic to handle both 100% (post-Jan 19, 2025) and 40% (pre-Jan 20, 2025) rates
-- Added equipment categories with proper IRS classifications
+- Implemented proper MACRS rate tables with correct 3-year, 5-year, and 7-year property rates
+- Added Section 179 expensing support with correct annual limits ($1,250,000 for 2025-2026)
+- Updated bonus depreciation logic with proper phase-down schedule (40% in 2025, 20% in 2026)
+- Added equipment categories with proper IRS classifications (Technology & Computing, Instruments & Sound, etc.)
 - Enhanced database schema to support equipment categories
 - Updated frontend to show proper equipment category selection
 
 **Results**:
+- 3-Year MACRS: Proper rates [33.33%, 44.45%, 14.81%, 7.41%] with half-year convention
 - 5-Year MACRS: Proper rates [20%, 32%, 19.2%, 11.52%, 11.52%, 5.76%]
 - 7-Year MACRS: Proper rates [14.29%, 24.49%, 17.49%, 12.49%, 8.93%, 8.92%, 8.93%, 4.46%]
-- Section 179: Immediate expensing up to annual limits
-- Bonus Depreciation: Automatic rate selection based on purchase date
-- Equipment Categories: Technology, Instruments, Stage Equipment, Transportation
+- Section 179: Proper annual limits with $1,250,000 max and $3,130,000 phase-out
+- Bonus Depreciation: Automatic rate selection (40% in 2025, 20% in 2026) based on purchase date
+- Equipment Categories: Technology & Computing (5-Year), Instruments & Sound (7-Year), etc.
 
 ### Previous Fixes
 1. **Depreciation Calculation Fix** - Fixed double conversion bug causing 100x discrepancy between Tax Report and Assets Page
