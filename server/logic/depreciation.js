@@ -1,18 +1,24 @@
 // Depreciation calculation engine for IRS MACRS compliance
-// Constants for depreciation methods (MACRS recovery periods)
-export const DEPRECIATION_METHODS = {
-  ST_3YEAR: { life: 3, convention: 'mid-quarter' },
-  ST_5YEAR: { life: 5, convention: 'mid-quarter' },
-  ST_7YEAR: { life: 7, convention: 'mid-quarter' },
-  BONUS_100: { life: 5, bonus: 1.00, convention: 'half-year' } // 100% bonus depreciation
-};
+import {
+  DEPRECIATION_METHODS as IRS_DEPRECIATION_METHODS,
+  MACRS_RATES,
+  SECTION_179_LIMITS,
+  BONUS_DEPRECIATION,
+  getMacrsRates,
+  getSection179Limit,
+  getBonusDepreciationRate
+} from '../data/irs_depreciation_tables.js';
 
-// Half-year convention lookup table
-const HALF_YEAR_TABLE = {
-  Q1: 0.875, // January-March: 87.5%
-  Q2: 0.625, // April-June: 62.5%
-  Q3: 0.375, // July-September: 37.5%
-  Q4: 0.125  // October-December: 12.5%
+// Combine our methods with IRS methods
+// Note: Half-year convention is the default for most property types
+// Mid-quarter convention is used when >40% of assets placed in service in last quarter
+export const DEPRECIATION_METHODS = {
+  ...IRS_DEPRECIATION_METHODS,
+  // Keep backward compatibility with existing methods
+  ST_3YEAR: { ...IRS_DEPRECIATION_METHODS.ST_3YEAR, life: 4, convention: 'half-year' },
+  ST_5YEAR: { ...IRS_DEPRECIATION_METHODS.ST_5YEAR, life: 6, convention: 'half-year' },
+  ST_7YEAR: { ...IRS_DEPRECIATION_METHODS.ST_7YEAR, life: 8, convention: 'half-year' },
+  BONUS_100: { ...IRS_DEPRECIATION_METHODS.BONUS_100, life: 6, bonus: 1.00, convention: 'half-year' }
 };
 
 /**
@@ -22,7 +28,12 @@ const HALF_YEAR_TABLE = {
  * @returns {Object} Depreciation calculation results
  */
 export function calculateDepreciationForYear(asset, taxYear) {
-  const purchaseDate = new Date(asset.purchase_date);
+  // DEBUG: Add debug at start
+  // console.log('DEBUG calculateDepreciationForYear', asset.id, 'year', taxYear);
+
+  // Parse date in local timezone to avoid UTC issues
+  const dateParts = asset.purchase_date.split('-');
+  const purchaseDate = new Date(dateParts[0], dateParts[1] - 1, dateParts[2]);
   const purchaseYear = purchaseDate.getFullYear();
 
   // Initialize result
@@ -38,6 +49,9 @@ export function calculateDepreciationForYear(asset, taxYear) {
     calculations: []
   };
 
+  // Years since purchase (including current year)
+  const yearsSincePurchase = taxYear - purchaseYear + 1;
+
   // If asset was disposed in or before this year, no depreciation
   if (asset.disposal_date) {
     const disposalYear = new Date(asset.disposal_date).getFullYear();
@@ -51,92 +65,187 @@ export function calculateDepreciationForYear(asset, taxYear) {
     return { ...result, depreciation_deduction: 0 };
   }
 
-  // Years since purchase (including current year)
-  const yearsSincePurchase = taxYear - purchaseYear + 1;
   const method = DEPRECIATION_METHODS[asset.depreciation_method];
-
   if (!method) {
     throw new Error(`Unknown depreciation method: ${asset.depreciation_method}`);
   }
 
-  // Handle bonus depreciation
-  if (asset.depreciation_method === 'BONUS_100' && yearsSincePurchase === 1) {
-    const bonusDeduction = result.cost_basis * method.bonus;
-    result.depreciation_deduction = bonusDeduction;
-    result.remaining_basis = result.cost_basis - bonusDeduction;
-    result.calculations.push({
-      year: 1,
-      method: 'BONUS_100%',
-      rate: '100.0%',
-      deduction: bonusDeduction,
-      formula: `${result.cost_basis} × 1.00 = ${bonusDeduction}`
-    });
+  // For Section 179 assets, the recovery period extends beyond the initial life
+  // because MACRS depreciation continues on the remaining basis
+  const effectiveLife = asset.depreciation_method === 'SECTION_179'
+    ? Math.max(method.life, 6) // Use at least 6 years (5-year MACRS) for Section 179
+    : method.life;
+
+  // Calculate deduction for this year
+  // For years beyond the recovery period, no depreciation
+  if (yearsSincePurchase > effectiveLife) {
+    result.depreciation_deduction = 0;
+    result.remaining_basis = 0;
+    // accumulated_depreciation will be calculated in the previous years loop
     return result;
   }
 
-  // Standard MACRS depreciation
-  const halfYearYear = method.convention === 'half-year' ? taxYear :
-    purchaseYear; // For mid-quarter, use purchase year for half-year calc
+  // Get the deduction for this year
+  const currentBasis = result.cost_basis;
+  let deduction = 0;
 
-  // Calculate depreciation for each year up to the recovery period
+  // Calculate accumulated depreciation from previous years
   let accumulatedDepreciation = 0;
+  let remainingBasis = currentBasis;
+  // DEBUG: Track initial state
+  console.log('DEBUG year', taxYear, 'initial accumDeprec:', accumulatedDepreciation, 'remainingBasis:', remainingBasis);
 
-  for (let year = 1; year <= method.life; year++) {
-    const calendarYear = purchaseYear + year - 1;
+  if (yearsSincePurchase > 1) {
+    // DEBUG: Track previous years processing
+    console.log('DEBUG year', taxYear, 'processing prev years 1 to', (yearsSincePurchase - 1));
+    for (let prevYear = 1; prevYear < yearsSincePurchase; prevYear++) {
+      const prevYearTaxYear = purchaseYear + prevYear - 1;
 
-    let deduction = 0;
+      // Handle previous years depreciation calculations
+      if (asset.depreciation_method === 'SECTION_179' && prevYear === 1) {
+        // Year 1 was Section 179 deduction - we need to calculate what that was
+        const section179Limit = getSection179Limit(prevYearTaxYear);
+        const section179Deduction = Math.min(currentBasis, section179Limit);
+        accumulatedDepreciation += section179Deduction;
+        remainingBasis -= section179Deduction;
+      } else if (asset.depreciation_method === 'SECTION_179' && prevYear > 1) {
+        // Years 2+ for Section 179 assets use MACRS on remaining basis
+        const macrsAsset = { ...asset, depreciation_method: 'ST_5YEAR' };
+        const prevYearRate = getMacrsRates(macrsAsset, prevYearTaxYear);
+        const prevYearDeduction = remainingBasis * prevYearRate;
+        accumulatedDepreciation += prevYearDeduction;
+        remainingBasis -= prevYearDeduction;
+      } else if (asset.depreciation_method.startsWith('BONUS_') && prevYear === 1) {
+        // Year 1 for bonus depreciation methods uses bonus rate
+        const bonusRate = getBonusDepreciationRate(asset.purchase_date);
+        const prevYearDeduction = currentBasis * bonusRate;
+        accumulatedDepreciation += prevYearDeduction;
+        remainingBasis -= prevYearDeduction;
+      } else if (asset.depreciation_method.startsWith('BONUS_')) {
+        // Years 2+ for bonus depreciation methods use MACRS rates
+        const prevYearRate = getMacrsRates({ ...asset, purchase_date: asset.purchase_date }, prevYearTaxYear);
 
-    // Skip if this year is not the target tax year
-    if (calendarYear !== taxYear) {
-      if (calendarYear < taxYear) {
-        // Accumulate previous year's depreciation
-        const prevYearResult = calculateDepreciationForYear(asset, calendarYear);
-        accumulatedDepreciation += prevYearResult.depreciation_deduction;
+        // For bonus years beyond recovery period, use remaining basis
+        const prevYearMethod = DEPRECIATION_METHODS[asset.depreciation_method];
+        const basisForPrevYear = prevYear > prevYearMethod.life
+          ? remainingBasis
+          : currentBasis;
+
+        const prevYearDeduction = basisForPrevYear * prevYearRate;
+        accumulatedDepreciation += prevYearDeduction;
+        remainingBasis -= prevYearDeduction;
+      } else {
+        // Standard MACRS depreciation
+        const prevYearRate = getMacrsRates({ ...asset, purchase_date: asset.purchase_date }, prevYearTaxYear);
+        const prevYearDeduction = currentBasis * prevYearRate;
+        accumulatedDepreciation += prevYearDeduction;
+        remainingBasis -= prevYearDeduction;
       }
-      continue;
     }
-
-    // Calculate this year's deduction
-    if (year === 1) {
-      // First year: Half-year convention
-      const quarter = Math.floor((purchaseDate.getMonth() / 12) * 4) + 1;
-      const quarterName = `Q${quarter}`;
-      const firstYearRate = HALF_YEAR_TABLE[quarterName];
-      deduction = result.cost_basis * firstYearRate;
-
-      result.calculations.push({
-        year,
-        method: method.convention,
-        rate: `${(firstYearRate * 100).toFixed(1)}%`,
-        quarter: quarterName,
-        deduction: deduction,
-        formula: `${result.cost_basis} × ${firstYearRate.toFixed(3)} (${quarterName}) = ${deduction.toFixed(2)}`
-      });
-    } else {
-      // Subsequent years: Full-year rates
-      const remainingDosage = method.life - year + 1;
-      const annualRate = remainingDosage !== 0 ? 2 / remainingDosage : 1;
-
-      deduction = result.cost_basis * annualRate;
-
-      result.calculations.push({
-        year,
-        method: 'EAD',
-        rate: `${(annualRate * 100).toFixed(1)}%`,
-        deduction: deduction,
-        formula: `${result.cost_basis} × ${annualRate.toFixed(3)} = ${deduction.toFixed(2)}`
-      });
-    }
-
-    // Ensure we don't exceed remaining basis
-    deduction = Math.min(deduction, result.remaining_basis - accumulatedDepreciation);
-
-    result.depreciation_deduction = deduction;
-    break;
   }
 
-  result.accumulated_depreciation = accumulatedDepreciation;
-  result.remaining_basis = result.cost_basis - accumulatedDepreciation - result.depreciation_deduction;
+  // Calculate current year deduction based on method
+
+  if (asset.depreciation_method.startsWith('BONUS_') && yearsSincePurchase === 1) {
+    // Bonus depreciation in year 1 (applied to original basis)
+    const bonusRate = getBonusDepreciationRate(asset.purchase_date);
+    deduction = currentBasis * bonusRate;
+    result.calculations.push({
+      year: 1,
+      method: `BONUS_${Math.round(bonusRate * 100)}%`,
+      rate: `${(bonusRate * 100).toFixed(0)}%`,
+      deduction: deduction,
+      formula: `${currentBasis.toFixed(2)} × ${bonusRate.toFixed(2)} = ${deduction.toFixed(2)}`
+    });
+  } else if (asset.depreciation_method === 'SECTION_179' && yearsSincePurchase === 1) {
+    // Section 179 expensing in year 1 (deduct up to annual limit)
+    const section179Limit = getSection179Limit(taxYear);
+    const section179Deduction = Math.min(currentBasis, section179Limit);
+    deduction = section179Deduction;
+    result.calculations.push({
+      year: 1,
+      method: 'SECTION_179',
+      rate: '100.0%',
+      deduction: deduction,
+      formula: `MIN(${currentBasis.toFixed(2)}, ${section179Limit.toFixed(2)}) (Section 179) = ${deduction.toFixed(2)}`
+    });
+  } else if (method.convention === 'mid-quarter' || method.convention === 'half-year') {
+    // MACRS depreciation (uses IRS tables)
+    const macrsRate = getMacrsRates(asset, taxYear);
+
+    // For standard MACRS and bonus depreciation years 1-3, use original basis
+    // For Section 179 methods or bonus years beyond recovery period, use remaining basis
+    const basisForDepreciation = ((asset.depreciation_method === 'SECTION_179') && yearsSincePurchase > 1) ||
+                                  (asset.depreciation_method.startsWith('BONUS_') && yearsSincePurchase > method.life)
+      ? remainingBasis
+      : currentBasis;
+
+    deduction = basisForDepreciation * macrsRate;
+
+    const quarter = Math.floor(purchaseDate.getMonth() / 3) + 1;
+    const quarterName = `Q${quarter}`;
+    const conventionName = method.convention === 'half-year' ? 'MACRS Half-Year' : 'MACRS Mid-Quarter';
+
+    result.calculations.push({
+      year: yearsSincePurchase,
+      method: conventionName,
+      rate: `${(macrsRate * 100).toFixed(2)}%`,
+      quarter: quarterName,
+      deduction: deduction,
+      formula: `${basisForDepreciation.toFixed(2)} × ${macrsRate.toFixed(4)} = ${deduction.toFixed(2)}`
+    });
+  } else if (asset.depreciation_method === 'SECTION_179' && yearsSincePurchase > 1) {
+    // For Section 179 assets in years after year 1, apply MACRS to remaining basis
+    // Use 5-year MACRS for Section 179 assets (common practice)
+    const macrsAsset = { ...asset, depreciation_method: 'ST_5YEAR' };
+    const macrsRate = getMacrsRates(macrsAsset, taxYear);
+
+    // Use remaining basis for MACRS calculation
+    const basisForDepreciation = remainingBasis;
+    deduction = basisForDepreciation * macrsRate;
+
+    const quarter = Math.floor(purchaseDate.getMonth() / 3) + 1;
+    const quarterName = `Q${quarter}`;
+    const conventionName = method.convention === 'half-year' ? 'MACRS Half-Year' : 'MACRS Mid-Quarter';
+
+    result.calculations.push({
+      year: yearsSincePurchase,
+      method: `SECTION_179 + ${conventionName}`,
+      rate: `${(macrsRate * 100).toFixed(2)}%`,
+      quarter: quarterName,
+      deduction: deduction,
+      formula: `${basisForDepreciation.toFixed(2)} × ${macrsRate.toFixed(4)} = ${deduction.toFixed(2)}`
+    });
+  } else {
+    throw new Error(`Unknown convention: ${method.convention}`);
+  }
+
+  // Apply over-depreciation cap (IRS compliance)
+  // If remaining basis is 0 or negative, no depreciation should be taken
+  // Handle floating point precision by using a small tolerance
+  const TOLERANCE = 1e-10;
+  if (remainingBasis <= TOLERANCE) {
+    // console.log('DEBUG: over-depreciation check hit, accumulatedDepreciation =', accumulatedDepreciation);
+    result.depreciation_deduction = 0;
+    result.accumulated_depreciation = accumulatedDepreciation;
+    result.remaining_basis = 0;
+    return result;
+  }
+
+  deduction = Math.min(deduction, remainingBasis);
+  deduction = Math.max(deduction, 0); // Don't allow negative
+
+  // For bonus depreciation in the final year, deplete the entire remaining basis
+  // Only apply this if we're in the final year of the recovery period
+  if (asset.depreciation_method.startsWith('BONUS_') &&
+      yearsSincePurchase >= method.life &&
+      deduction < remainingBasis) {
+    deduction = remainingBasis;
+  }
+
+  result.depreciation_deduction = deduction;
+  result.accumulated_depreciation = accumulatedDepreciation + deduction;
+  result.remaining_basis = remainingBasis - deduction;
 
   return result;
 }
