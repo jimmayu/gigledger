@@ -28,8 +28,7 @@ export const DEPRECIATION_METHODS = {
  * @returns {Object} Depreciation calculation results
  */
 export function calculateDepreciationForYear(asset, taxYear) {
-  // DEBUG: Add debug at start
-  // console.log('DEBUG calculateDepreciationForYear', asset.id, 'year', taxYear);
+    // 
 
   // Parse date in local timezone to avoid UTC issues
   const dateParts = asset.purchase_date.split('-');
@@ -92,12 +91,10 @@ export function calculateDepreciationForYear(asset, taxYear) {
   // Calculate accumulated depreciation from previous years
   let accumulatedDepreciation = 0;
   let remainingBasis = currentBasis;
-  // DEBUG: Track initial state
-  console.log('DEBUG year', taxYear, 'initial accumDeprec:', accumulatedDepreciation, 'remainingBasis:', remainingBasis);
+    
 
   if (yearsSincePurchase > 1) {
-    // DEBUG: Track previous years processing
-    console.log('DEBUG year', taxYear, 'processing prev years 1 to', (yearsSincePurchase - 1));
+        
     for (let prevYear = 1; prevYear < yearsSincePurchase; prevYear++) {
       const prevYearTaxYear = purchaseYear + prevYear - 1;
 
@@ -225,7 +222,7 @@ export function calculateDepreciationForYear(asset, taxYear) {
   // Handle floating point precision by using a small tolerance
   const TOLERANCE = 1e-10;
   if (remainingBasis <= TOLERANCE) {
-    // console.log('DEBUG: over-depreciation check hit, accumulatedDepreciation =', accumulatedDepreciation);
+    // 
     result.depreciation_deduction = 0;
     result.accumulated_depreciation = accumulatedDepreciation;
     result.remaining_basis = 0;
