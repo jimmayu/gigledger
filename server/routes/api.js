@@ -7,6 +7,16 @@ const router = express.Router();
 
 // Middleware to authenticate requests
 const authenticate = (req, res, next) => {
+  // Check if authentication is disabled
+  const AUTH_MODE = process.env.AUTH_MODE || (process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled');
+
+  if (AUTH_MODE === 'disabled') {
+    // When authentication is disabled, use default user ID
+    req.userId = 1;
+    return next();
+  }
+
+  // Standard authentication when enabled
   const userId = req.cookies?.user_id;
   if (!userId) {
     return res.status(401).json({ error: 'Authentication required' });
@@ -256,7 +266,7 @@ router.get('/assets', authenticate, (req, res) => {
 
     // Add depreciation calculations for each asset
     const assetsWithDepreciation = assets.map(asset => {
-      const depreciationResult = calculateDepreciationForYear({ ...asset, cost_basis: asset.cost_basis / 100 }, taxYear);
+      const depreciationResult = calculateDepreciationForYear(asset, taxYear);
       return {
         ...asset,
         depreciationResult
@@ -279,6 +289,7 @@ router.post('/assets', authenticate, (req, res) => {
       purchase_date,
       cost_basis,
       depreciation_method,
+      equipment_category,
       notes
     } = req.body;
 
@@ -287,21 +298,33 @@ router.post('/assets', authenticate, (req, res) => {
     }
 
     // Validate depreciation method
-    const validMethods = ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100'];
+    const validMethods = ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100', 'BONUS_40', 'SECTION_179'];
     if (!validMethods.includes(depreciation_method)) {
       return res.status(400).json({ error: 'Invalid depreciation method' });
     }
 
+    // Validate equipment category (can be null, but must be valid if provided)
+    if (equipment_category !== null && equipment_category !== undefined && equipment_category !== '') {
+      const validCategories = ['TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'];
+      if (!validCategories.includes(equipment_category)) {
+        return res.status(400).json({
+          error: 'Invalid equipment category',
+          validCategories: validCategories
+        });
+      }
+    }
+
     const result = db.prepare(`
       INSERT INTO assets (
-        user_id, name, purchase_date, cost_basis, depreciation_method, notes
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        user_id, name, purchase_date, cost_basis, depreciation_method, equipment_category, notes
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       req.userId,
       name,
       purchase_date,
       Math.floor(cost_basis * 100), // Convert dollars to cents
       depreciation_method,
+      equipment_category || null,
       notes || null
     );
 
@@ -309,7 +332,27 @@ router.post('/assets', authenticate, (req, res) => {
     res.status(201).json(newAsset);
   } catch (error) {
     console.error('Asset creation error:', error);
-    res.status(500).json({ error: 'Failed to create asset' });
+
+    // Provide more specific error messages based on error type
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      if (error.message.includes('equipment_category')) {
+        res.status(400).json({
+          error: 'Invalid equipment category value. Please select a valid category.',
+          validCategories: ['TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION']
+        });
+      } else if (error.message.includes('depreciation_method')) {
+        res.status(400).json({
+          error: 'Invalid depreciation method. Please select a valid method.',
+          validMethods: ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100', 'BONUS_40', 'SECTION_179']
+        });
+      } else {
+        res.status(400).json({ error: 'Database constraint violation: ' + error.message });
+      }
+    } else if (error.code === 'SQLITE_ERROR') {
+      res.status(500).json({ error: 'Database error: ' + error.message });
+    } else {
+      res.status(500).json({ error: 'Failed to create asset: ' + error.message });
+    }
   }
 });
 
@@ -350,7 +393,15 @@ router.put('/assets/:id/sell', authenticate, (req, res) => {
     res.json(updatedAsset);
   } catch (error) {
     console.error('Asset disposal error:', error);
-    res.status(500).json({ error: 'Failed to mark asset as sold' });
+
+    // Provide more specific error messages based on error type
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      res.status(400).json({ error: 'Database constraint violation: ' + error.message });
+    } else if (error.code === 'SQLITE_ERROR') {
+      res.status(500).json({ error: 'Database error: ' + error.message });
+    } else {
+      res.status(500).json({ error: 'Failed to mark asset as sold: ' + error.message });
+    }
   }
 });
 
@@ -368,6 +419,25 @@ router.put('/assets/:id', authenticate, (req, res) => {
 
     if (!existing) {
       return res.status(404).json({ error: 'Asset not found' });
+    }
+
+    // Validate equipment category if provided
+    if (updates.equipment_category !== null && updates.equipment_category !== undefined && updates.equipment_category !== '') {
+      const validCategories = ['TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'];
+      if (!validCategories.includes(updates.equipment_category)) {
+        return res.status(400).json({
+          error: 'Invalid equipment category',
+          validCategories: validCategories
+        });
+      }
+    }
+
+    // Validate depreciation method if provided
+    if (updates.depreciation_method) {
+      const validMethods = ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100', 'BONUS_40', 'SECTION_179'];
+      if (!validMethods.includes(updates.depreciation_method)) {
+        return res.status(400).json({ error: 'Invalid depreciation method' });
+      }
     }
 
     // Build update query
@@ -400,7 +470,27 @@ router.put('/assets/:id', authenticate, (req, res) => {
     res.json(updatedAsset);
   } catch (error) {
     console.error('Asset update error:', error);
-    res.status(500).json({ error: 'Failed to update asset' });
+
+    // Provide more specific error messages based on error type
+    if (error.code === 'SQLITE_CONSTRAINT') {
+      if (error.message.includes('equipment_category')) {
+        res.status(400).json({
+          error: 'Invalid equipment category value. Please select a valid category.',
+          validCategories: ['TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION']
+        });
+      } else if (error.message.includes('depreciation_method')) {
+        res.status(400).json({
+          error: 'Invalid depreciation method. Please select a valid method.',
+          validMethods: ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100', 'BONUS_40', 'SECTION_179']
+        });
+      } else {
+        res.status(400).json({ error: 'Database constraint violation: ' + error.message });
+      }
+    } else if (error.code === 'SQLITE_ERROR') {
+      res.status(500).json({ error: 'Database error: ' + error.message });
+    } else {
+      res.status(500).json({ error: 'Failed to update asset: ' + error.message });
+    }
   }
 });
 

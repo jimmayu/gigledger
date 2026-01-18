@@ -1,0 +1,26 @@
+services:
+  gigledger:
+    build:
+      context: .
+      args:
+        GIGLEDGER_BASE_PATH: ${GIGLEDGER_BASE_PATH:-}
+    ports:
+      - "3000:3000"
+    volumes:
+      # Mount SQLite database as persistent volume
+      - ./data:/app/data
+    environment:
+      - NODE_ENV=production
+      - DATABASE_PATH=/app/data/ledger.db
+      # Authentication mode: 'enabled' for production security, 'disabled' for development
+      - AUTH_MODE=enabled
+      # Optional. Unset/empty => serve at /
+      # Example: /gigledger
+      - GIGLEDGER_BASE_PATH=${GIGLEDGER_BASE_PATH:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-lc", "curl -f http://localhost:3000${GIGLEDGER_BASE_PATH:-}/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

@@ -8,6 +8,7 @@ export default function AssetModal({ asset, onSave, onCancel }) {
     purchase_date: '',
     cost_basis: '',
     depreciation_method: 'ST_5YEAR',
+    equipment_category: 'INSTRUMENTS_SOUND',
     notes: ''
   })
   const [loading, setLoading] = useState(false)
@@ -20,6 +21,7 @@ export default function AssetModal({ asset, onSave, onCancel }) {
         purchase_date: asset.purchase_date ? new Date(asset.purchase_date).toISOString().split('T')[0] : '',
         cost_basis: asset.cost_basis?.toString() || '',
         depreciation_method: asset.depreciation_method || 'ST_5YEAR',
+        equipment_category: asset.equipment_category || 'INSTRUMENTS_SOUND',
         notes: asset.notes || ''
       })
     } else {
@@ -29,16 +31,26 @@ export default function AssetModal({ asset, onSave, onCancel }) {
         purchase_date: new Date().toISOString().split('T')[0],
         cost_basis: '',
         depreciation_method: 'ST_5YEAR',
+        equipment_category: 'INSTRUMENTS_SOUND',
         notes: ''
       })
     }
   }, [asset])
 
+  const equipmentCategories = [
+    { value: 'TECHNOLOGY_COMPUTING', label: 'Technology & Computing (iPads, laptops, digital mixers)' },
+    { value: 'INSTRUMENTS_SOUND', label: 'Instruments & Sound (guitars, amps, PA speakers, mics)' },
+    { value: 'STAGE_STUDIO', label: 'Stage & Studio (lighting, trussing, music stands)' },
+    { value: 'TRANSPORTATION', label: 'Transportation (tour vans, trailers)' }
+  ];
+
   const depreciationMethods = [
     { value: 'ST_3YEAR', label: '3-Year MACRS (musical instruments)' },
     { value: 'ST_5YEAR', label: '5-Year MACRS (sound equipment, computers)' },
     { value: 'ST_7YEAR', label: '7-Year MACRS (other equipment)' },
-    { value: 'BONUS_100', label: '100% Bonus Depreciation (max tax savings)' }
+    { value: 'BONUS_100', label: '100% Bonus Depreciation (post Jan 19, 2025 purchases)' },
+    { value: 'BONUS_40', label: '40% Bonus Depreciation (pre Jan 20, 2025 purchases)' },
+    { value: 'SECTION_179', label: 'Section 179 Expensing (immediate deduction up to $2.5M)' }
   ]
 
   const handleSubmit = async (e) => {
@@ -49,7 +61,8 @@ export default function AssetModal({ asset, onSave, onCancel }) {
     try {
       const data = {
         ...formData,
-        cost_basis: parseFloat(formData.cost_basis)
+        cost_basis: parseFloat(formData.cost_basis),
+        equipment_category: formData.equipment_category
       }
 
       const method = asset ? 'PUT' : 'POST'
@@ -133,6 +146,27 @@ export default function AssetModal({ asset, onSave, onCancel }) {
                 </div>
               </div>
 
+              {/* Equipment Category */}
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700">Equipment Category *</label>
+                <select
+                  required
+                  value={formData.equipment_category}
+                  onChange={(e) => setFormData(prev => ({ ...prev, equipment_category: e.target.value }))}
+                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  disabled={loading}
+                >
+                  {equipmentCategories.map(category => (
+                    <option key={category.value} value={category.value}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-sm text-gray-500">
+                  Select the category that best describes your equipment for proper IRS classification
+                </p>
+              </div>
+
               {/* Depreciation Method */}
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700">Depreciation Method *</label>
@@ -151,7 +185,11 @@ export default function AssetModal({ asset, onSave, onCancel }) {
                 </select>
                 <p className="mt-1 text-sm text-gray-500">
                   {formData.depreciation_method === 'BONUS_100' &&
-                    '100% Bonus: Deduct the entire cost in the first year for maximum tax savings'}
+                    '100% Bonus: Deduct entire cost in first year (purchases after Jan 19, 2025)'}
+                  {formData.depreciation_method === 'BONUS_40' &&
+                    '40% Bonus: Deduct 40% in first year (purchases before Jan 20, 2025)'}
+                  {formData.depreciation_method === 'SECTION_179' &&
+                    'Section 179: Immediate expensing up to annual limits (requires business profit)'}
                   {formData.depreciation_method === 'ST_3YEAR' &&
                     '3-Year MACRS: For musical instruments used professionally'}
                   {formData.depreciation_method === 'ST_5YEAR' &&

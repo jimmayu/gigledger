@@ -10,20 +10,51 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Initialize database
+let db;
 try {
-  initDatabase();
+  db = initDatabase();
   console.log('Database initialized successfully');
 } catch (error) {
   console.error('Failed to initialize database:', error);
   process.exit(1);
 }
 
+// Authentication mode configuration
+const AUTH_MODE = process.env.AUTH_MODE || (process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled');
+console.log(`Authentication mode: ${AUTH_MODE}`);
+
+// Create default user when authentication is disabled
+if (AUTH_MODE === 'disabled') {
+  try {
+    // Check if default user exists
+    const defaultUser = db.prepare('SELECT id FROM users WHERE id = 1').get();
+    if (!defaultUser) {
+      // Create default user with a simple password hash (since it won't be used)
+      const defaultPasswordHash = '$2b$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // Placeholder hash
+      db.prepare('INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(
+        1, 'default-user', defaultPasswordHash
+      );
+      console.log('Default user created for development');
+    } else {
+      console.log('Default user already exists');
+    }
+  } catch (error) {
+    console.error('Error creating default user:', error);
+  }
+}
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// When deployed behind Traefik with PathPrefix(`/gigledger`), requests arrive as
-// /gigledger/... so we mount API routes at both locations.
-const API_BASES = ['/api', '/gigledger/api'];
+const normalizeBasePath = (raw) => {
+  const value = (raw || '').trim();
+  if (value === '' || value === '/') return '';
+  const withLeadingSlash = value.startsWith('/') ? value : `/${value}`;
+  return withLeadingSlash.replace(/\/$/, '');
+};
+
+const BASE_PATH = normalizeBasePath(process.env.GIGLEDGER_BASE_PATH);
+const API_BASE = `${BASE_PATH}/api`; // '' => '/api'
 
 // Middleware
 app.use(cors({
@@ -34,17 +65,29 @@ app.use(express.json());
 app.use(cookieParser());
 
 // API routes
-for (const base of API_BASES) {
-  app.use(base, apiRoutes);
-}
+app.use(API_BASE, apiRoutes);
 
 // Health check
-app.get(API_BASES.map(base => `${base}/health`), (req, res) => {
+app.get(`${API_BASE}/health`, (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Auth mode check
+app.get(`${API_BASE}/auth/mode`, (req, res) => {
+  res.json({ authMode: AUTH_MODE });
+});
+
 // User registration
-app.post(API_BASES.map(base => `${base}/auth/register`), async (req, res) => {
+app.post(`${API_BASE}/auth/register`, async (req, res) => {
+  // When authentication is disabled, skip registration
+  if (AUTH_MODE === 'disabled') {
+    return res.status(200).json({
+      message: 'Authentication disabled - using default user',
+      userId: 1,
+      user: { id: 1, username: 'default-user' }
+    });
+  }
+
   try {
     const db = initDatabase(); // Get database instance
     const { username, password } = req.body;
@@ -78,7 +121,22 @@ app.post(API_BASES.map(base => `${base}/auth/register`), async (req, res) => {
 });
 
 // User login
-app.post(API_BASES.map(base => `${base}/auth/login`), async (req, res) => {
+app.post(`${API_BASE}/auth/login`, async (req, res) => {
+  // When authentication is disabled, automatically login as default user
+  if (AUTH_MODE === 'disabled') {
+    res.cookie('user_id', 1, {
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      sameSite: 'lax',
+      secure: false
+    });
+
+    return res.json({
+      message: 'Login successful (authentication disabled)',
+      user: { id: 1, username: 'default-user' }
+    });
+  }
+
   try {
     const db = initDatabase(); // Get database instance
     const { username, password } = req.body;
@@ -119,13 +177,20 @@ app.post(API_BASES.map(base => `${base}/auth/login`), async (req, res) => {
 });
 
 // Logout
-app.post(API_BASES.map(base => `${base}/auth/logout`), (req, res) => {
+app.post(`${API_BASE}/auth/logout`, (req, res) => {
   res.clearCookie('user_id');
   res.json({ message: 'Logout successful' });
 });
 
 // Get current user
-app.get(API_BASES.map(base => `${base}/auth/me`), (req, res) => {
+app.get(`${API_BASE}/auth/me`, (req, res) => {
+  // When authentication is disabled, return default user
+  if (AUTH_MODE === 'disabled') {
+    return res.json({
+      user: { id: 1, username: 'default-user', created_at: new Date().toISOString() }
+    });
+  }
+
   const userId = req.cookies?.user_id;
   if (!userId) {
     return res.status(401).json({ error: 'Not authenticated' });
@@ -144,19 +209,32 @@ app.get(API_BASES.map(base => `${base}/auth/me`), (req, res) => {
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '..', 'dist');
 
-  // Serve assets at /gigledger/*
-  app.use('/gigledger', express.static(distPath, { index: false }));
+  if (BASE_PATH === '') {
+    // Root deployment
+    app.use(express.static(distPath, { index: false }));
 
-  // SPA fallback: let React Router handle client-side routes
-  app.get(['/gigledger', '/gigledger/', '/gigledger/*'], (req, res) => {
-    res.sendFile(path.join(distPath, 'index.html'));
-  });
+    // SPA fallback: let React Router handle client-side routes
+    app.get(['/', '/*'], (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  } else {
+    // Subpath deployment (e.g. /gigledger)
+    app.use(BASE_PATH, express.static(distPath, { index: false }));
+
+    // SPA fallback: let React Router handle client-side routes
+    app.get([BASE_PATH, `${BASE_PATH}/`, `${BASE_PATH}/*`], (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
 }
 
 // Start server
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
+  const lanIP = process.env.LAN_IP || '192.168.1.13'; // Default to the user's IP
   console.log(`GigLedger server running on port ${PORT}`);
-  console.log(`API Health check: http://localhost:${PORT}/api/health`);
+  console.log(`Local access: http://localhost:${PORT}`);
+  console.log(`LAN access: http://${lanIP}:${PORT}`);
+  console.log(`API Health check: http://localhost:${PORT}${API_BASE}/health`);
 });
 
 export default app;

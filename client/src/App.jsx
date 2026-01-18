@@ -19,10 +19,20 @@ function App() {
 
   const checkAuthStatus = async () => {
     try {
-      const response = await fetch(`${API_BASE}/auth/me`)
-      if (response.ok) {
-        const data = await response.json()
-        setUser(data.user)
+      // First check the auth mode
+      const modeResponse = await fetch(`${API_BASE}/auth/mode`)
+      const modeData = await modeResponse.json()
+
+      if (modeData.authMode === 'disabled') {
+        // When authentication is disabled, use default user
+        setUser({ id: 1, username: 'default-user' })
+      } else {
+        // Standard authentication flow
+        const response = await fetch(`${API_BASE}/auth/me`)
+        if (response.ok) {
+          const data = await response.json()
+          setUser(data.user)
+        }
       }
     } catch (error) {
       console.error('Auth check failed:', error)

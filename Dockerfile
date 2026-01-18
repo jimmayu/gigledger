@@ -20,6 +20,8 @@ COPY . .
 RUN rm -rf node_modules/better-sqlite3 && npm install better-sqlite3 --build-from-source
 
 # Build frontend assets for production
+ARG GIGLEDGER_BASE_PATH=
+ENV GIGLEDGER_BASE_PATH=${GIGLEDGER_BASE_PATH}
 RUN npm run build
 
 # Create directory for SQLite database
@@ -33,7 +35,7 @@ EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "fetch('http://localhost:3000/api/health').then(r => r.ok ? process.exit(0) : process.exit(1))"
+  CMD node -e "const normalize=(raw)=>{const v=(raw||'').trim();if(v===''||v==='/')return '';const s=v.startsWith('/')?v:'/'+v;return s.replace(/\\/$/,'');};const bp=normalize(process.env.GIGLEDGER_BASE_PATH);fetch('http://localhost:3000'+bp+'/api/health').then(r=>r.ok?process.exit(0):process.exit(1)).catch(()=>process.exit(1))"
 
 # Start the application
 CMD ["npm", "start"]
