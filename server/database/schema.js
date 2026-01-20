@@ -65,7 +65,7 @@ function needsMigration(db) {
     const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='assets'").get();
     const hasNewDepreciationMethods = tableInfo && tableInfo.sql.includes('BONUS_40') && tableInfo.sql.includes('SECTION_179');
 
-    return !hasEquipmentCategory || !hasNewDepreciationMethods;
+    return !hasEquipmentCategory;
   } catch (error) {
     console.error('Error checking migration status:', error);
     return true; // Assume migration is needed if we can't check
