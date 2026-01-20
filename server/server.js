@@ -46,6 +46,8 @@ if (AUTH_MODE === 'disabled') {
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : false);
+
 const normalizeBasePath = (raw) => {
   const value = (raw || '').trim();
   if (value === '' || value === '/') return '';
@@ -126,9 +128,10 @@ app.post(`${API_BASE}/auth/login`, async (req, res) => {
   if (AUTH_MODE === 'disabled') {
     res.cookie('user_id', 1, {
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
-      secure: false
+      secure: process.env.NODE_ENV === 'production',
+      domain: process.env.COOKIE_DOMAIN || undefined
     });
 
     return res.json({
@@ -161,9 +164,10 @@ app.post(`${API_BASE}/auth/login`, async (req, res) => {
     // Set session cookie
     res.cookie('user_id', user.id, {
       httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
-      secure: false // Allow insecure for development
+      secure: process.env.NODE_ENV === 'production',
+      domain: process.env.COOKIE_DOMAIN || undefined
     });
 
     res.json({

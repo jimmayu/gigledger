@@ -16,9 +16,6 @@ RUN npm install
 # Copy application source
 COPY . .
 
-# Force complete rebuild of better-sqlite3 from source
-RUN rm -rf node_modules/better-sqlite3 && npm install better-sqlite3 --build-from-source
-
 # Build frontend assets for production
 ARG GIGLEDGER_BASE_PATH=
 ENV GIGLEDGER_BASE_PATH=${GIGLEDGER_BASE_PATH}
