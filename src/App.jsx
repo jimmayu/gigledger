@@ -20,7 +20,9 @@ function App() {
   const checkAuthStatus = async () => {
     try {
       // First check the auth mode
-      const modeResponse = await fetch(`${API_BASE}/auth/mode`)
+      const modeResponse = await fetch(`${API_BASE}/auth/mode`, {
+        credentials: 'include'
+      })
       const modeData = await modeResponse.json()
 
       if (modeData.authMode === 'disabled') {
@@ -28,7 +30,9 @@ function App() {
         setUser({ id: 1, username: 'default-user' })
       } else {
         // Standard authentication flow
-        const response = await fetch(`${API_BASE}/auth/me`)
+        const response = await fetch(`${API_BASE}/auth/me`, {
+          credentials: 'include'
+        })
         if (response.ok) {
           const data = await response.json()
           setUser(data.user)
@@ -47,7 +51,10 @@ function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch(`${API_BASE}/auth/logout`, { method: 'POST' })
+      await fetch(`${API_BASE}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include'
+      })
       setUser(null)
     } catch (error) {
       console.error('Logout failed:', error)

@@ -22,7 +22,9 @@ export default function Transactions() {
   const loadTransactions = async () => {
     try {
       const params = new URLSearchParams(filters)
-      const response = await fetch(`${API_BASE}/transactions?${params}`)
+      const response = await fetch(`${API_BASE}/transactions?${params}`, {
+        credentials: 'include'
+      })
       if (response.ok) {
         let data = await response.json()
         // Convert cents to dollars for display
@@ -51,7 +53,8 @@ export default function Transactions() {
 
     try {
       const response = await fetch(`${API_BASE}/transactions/${transactionId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       })
       if (response.ok) {
         loadTransactions()

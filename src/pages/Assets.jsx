@@ -16,7 +16,9 @@ export default function Assets() {
 
   const loadAssets = async () => {
     try {
-      const response = await fetch(`${API_BASE}/assets?year=${taxYear}`)
+      const response = await fetch(`${API_BASE}/assets?year=${taxYear}`, {
+        credentials: 'include'
+      })
       if (response.ok) {
         let data = await response.json()
         // Convert cents to dollars (depreciation already calculated on server)
@@ -54,6 +56,7 @@ export default function Assets() {
       const response = await fetch(`${API_BASE}/assets/${assetId}/sell`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           disposal_date: sellDate,
           disposal_price: parseFloat(sellPrice)
@@ -71,7 +74,10 @@ export default function Assets() {
     if (!confirm('Are you sure you want to delete this asset?')) return
 
     try {
-      const response = await fetch(`${API_BASE}/assets/${assetId}`, { method: 'DELETE' })
+      const response = await fetch(`${API_BASE}/assets/${assetId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      })
       if (response.ok) {
         loadAssets()
       }

@@ -16,7 +16,9 @@ export default function Dashboard() {
 
   const loadSummary = async () => {
     try {
-      const response = await fetch(`${API_BASE}/summary?year=${taxYear}`)
+      const response = await fetch(`${API_BASE}/summary?year=${taxYear}`, {
+        credentials: 'include'
+      })
       if (response.ok) {
         const data = await response.json()
         setSummary(data)
