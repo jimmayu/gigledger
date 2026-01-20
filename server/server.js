@@ -213,9 +213,38 @@ app.get(`${API_BASE}/auth/me`, (req, res) => {
 if (process.env.NODE_ENV === 'production') {
   const distPath = path.join(__dirname, '..', 'dist');
 
+  // Custom static file handler with explicit MIME types
+  const serveStaticWithMimeTypes = express.static(distPath, {
+    index: false,
+    setHeaders: (res, filepath) => {
+      // Set explicit MIME types for common file extensions
+      if (filepath.endsWith('.css')) {
+        res.setHeader('Content-Type', 'text/css');
+      } else if (filepath.endsWith('.js') || filepath.endsWith('.mjs')) {
+        res.setHeader('Content-Type', 'application/javascript');
+      } else if (filepath.endsWith('.html')) {
+        res.setHeader('Content-Type', 'text/html');
+      } else if (filepath.endsWith('.json')) {
+        res.setHeader('Content-Type', 'application/json');
+      } else if (filepath.endsWith('.png')) {
+        res.setHeader('Content-Type', 'image/png');
+      } else if (filepath.endsWith('.jpg') || filepath.endsWith('.jpeg')) {
+        res.setHeader('Content-Type', 'image/jpeg');
+      } else if (filepath.endsWith('.svg')) {
+        res.setHeader('Content-Type', 'image/svg+xml');
+      } else if (filepath.endsWith('.ico')) {
+        res.setHeader('Content-Type', 'image/x-icon');
+      } else if (filepath.endsWith('.woff')) {
+        res.setHeader('Content-Type', 'font/woff');
+      } else if (filepath.endsWith('.woff2')) {
+        res.setHeader('Content-Type', 'font/woff2');
+      }
+    }
+  });
+
   if (BASE_PATH === '') {
     // Root deployment
-    app.use(express.static(distPath, { index: false }));
+    app.use(serveStaticWithMimeTypes);
 
     // SPA fallback: let React Router handle client-side routes
     app.get(['/', '/*'], (req, res) => {
@@ -223,7 +252,7 @@ if (process.env.NODE_ENV === 'production') {
     });
   } else {
     // Subpath deployment (e.g. /gigledger)
-    app.use(BASE_PATH, express.static(distPath, { index: false }));
+    app.use(BASE_PATH, serveStaticWithMimeTypes);
 
     // SPA fallback: let React Router handle client-side routes
     app.get([BASE_PATH, `${BASE_PATH}/`, `${BASE_PATH}/*`], (req, res) => {

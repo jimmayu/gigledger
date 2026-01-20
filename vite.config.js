@@ -1,5 +1,5 @@
-const { defineConfig } = require('vite')
-const react = require('@vitejs/plugin-react')
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
 // Normalize base path similar to server logic
 const normalizeBasePath = (raw) => {
@@ -11,7 +11,7 @@ const normalizeBasePath = (raw) => {
 
 const basePath = normalizeBasePath(process.env.GIGLEDGER_BASE_PATH);
 
-module.exports = defineConfig({
+export default defineConfig({
   plugins: [react()],
   base: basePath || '/',
   build: {
