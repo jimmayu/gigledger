@@ -14,7 +14,21 @@ export const SCHEMA = {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
       password_hash TEXT NOT NULL,
+      role TEXT DEFAULT 'user' CHECK(role IN ('admin', 'user')),
+      failed_attempts INTEGER DEFAULT 0,
+      locked_until DATETIME,
+      last_activity DATETIME,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`,
+
+  // Login attempts for security monitoring
+  login_attempts: `
+    CREATE TABLE IF NOT EXISTS login_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT,
+      ip_address TEXT,
+      success BOOLEAN NOT NULL,
+      attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`,
 
   // Transactions table for income/expenses (stored in cents)
@@ -54,21 +68,21 @@ export const SCHEMA = {
     )`
 };
 
-// Check if migration is needed
 function needsMigration(db) {
   try {
-    // Check if equipment_category column exists
-    const columns = db.prepare("PRAGMA table_info(assets)").all();
-    const hasEquipmentCategory = columns.some(column => column.name === 'equipment_category');
+    const userColumns = db.prepare("PRAGMA table_info(users)").all();
+    const hasRoleColumn = userColumns.some(column => column.name === 'role');
 
-    // Check if depreciation_method constraint includes new values
-    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='assets'").get();
-    const hasNewDepreciationMethods = tableInfo && tableInfo.sql.includes('BONUS_40') && tableInfo.sql.includes('SECTION_179');
+    const loginAttemptsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'").get();
+    const hasLoginAttemptsTable = !!loginAttemptsTable;
 
-    return !hasEquipmentCategory;
+    const assetColumns = db.prepare("PRAGMA table_info(assets)").all();
+    const hasEquipmentCategory = assetColumns.some(column => column.name === 'equipment_category');
+
+    return !hasRoleColumn || !hasLoginAttemptsTable || !hasEquipmentCategory;
   } catch (error) {
     console.error('Error checking migration status:', error);
-    return true; // Assume migration is needed if we can't check
+    return true;
   }
 }
 
@@ -77,21 +91,54 @@ function applyMigration(db) {
   try {
     console.log('Starting database migration...');
 
-    // Start transaction
     const migrationTransaction = db.transaction(() => {
-      // Check if equipment_category column exists
-      const columns = db.prepare("PRAGMA table_info(assets)").all();
-      const hasEquipmentCategory = columns.some(column => column.name === 'equipment_category');
+      const userColumns = db.prepare("PRAGMA table_info(users)").all();
+      const hasRoleColumn = userColumns.some(column => column.name === 'role');
+      const hasFailedAttemptsColumn = userColumns.some(column => column.name === 'failed_attempts');
+      const hasLockedUntilColumn = userColumns.some(column => column.name === 'locked_until');
+      const hasLastActivityColumn = userColumns.some(column => column.name === 'last_activity');
 
-      // Add equipment_category column if it doesn't exist
-      if (!hasEquipmentCategory) {
-        console.log('Adding equipment_category column...');
-        db.exec("ALTER TABLE assets ADD COLUMN equipment_category TEXT CHECK(equipment_category IN ('TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'))");
+      if (!hasRoleColumn) {
+        console.log('Adding role column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK(role IN ('admin', 'user'))");
       }
 
-      // Note: SQLite doesn't support modifying CHECK constraints directly
-      // The CHECK constraint will be updated when we recreate the table if needed
-      // For now, we'll leave the existing constraint as is since it's additive only
+      if (!hasFailedAttemptsColumn) {
+        console.log('Adding failed_attempts column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0");
+      }
+
+      if (!hasLockedUntilColumn) {
+        console.log('Adding locked_until column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN locked_until DATETIME");
+      }
+
+      if (!hasLastActivityColumn) {
+        console.log('Adding last_activity column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN last_activity DATETIME");
+      }
+
+      const loginAttemptsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'").get();
+      if (!loginAttemptsTable) {
+        console.log('Creating login_attempts table...');
+        db.exec(`
+          CREATE TABLE login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            ip_address TEXT,
+            success BOOLEAN NOT NULL,
+            attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      }
+
+      const assetColumns = db.prepare("PRAGMA table_info(assets)").all();
+      const hasEquipmentCategory = assetColumns.some(column => column.name === 'equipment_category');
+
+      if (!hasEquipmentCategory) {
+        console.log('Adding equipment_category column to assets table...');
+        db.exec("ALTER TABLE assets ADD COLUMN equipment_category TEXT CHECK(equipment_category IN ('TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'))");
+      }
 
       console.log('Database migration completed successfully');
     });

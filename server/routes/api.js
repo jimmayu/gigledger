@@ -1,34 +1,50 @@
 import express from 'express';
 import { getDatabase } from '../database/schema.js';
-import { calculateDepreciationForYear, calculateDepreciationSummary } from '../logic/depreciation.js';
-import { calculateYearToDateFinancials, calculateTotalDepreciation, calculateTaxLiability } from '../logic/financial.js';
 
 const router = express.Router();
 
-// Middleware to authenticate requests
 const authenticate = (req, res, next) => {
-  // Check if authentication is disabled
   const AUTH_MODE = process.env.AUTH_MODE || (process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled');
 
   if (AUTH_MODE === 'disabled') {
-    // When authentication is disabled, use default user ID
     req.userId = 1;
+    req.userRole = 'admin';
     return next();
   }
 
-  // Standard authentication when enabled
   const userId = req.cookies?.user_id;
+
   if (!userId) {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
   const db = getDatabase();
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(userId);
+
   if (!user) {
     return res.status(401).json({ error: 'Invalid user session' });
   }
 
   req.userId = parseInt(userId);
+  req.userRole = user.role;
+
+  const auth = import('../auth/auth.js');
+  auth.then(module => {
+    if (!module.isSessionValid(userId)) {
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+    module.updateLastActivity(userId);
+    next();
+  }).catch(error => {
+    console.error('Auth middleware error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  });
+};
+
+const requireAdmin = (req, res, next) => {
+  if (req.userRole !== 'admin') {
+    return res.status(403).json({ error: 'Admin access required' });
+  }
   next();
 };
 
@@ -47,6 +63,9 @@ router.get('/summary', authenticate, (req, res) => {
     const assets = db.prepare(`
       SELECT * FROM assets WHERE user_id = ? ORDER BY purchase_date DESC
     `).all(req.userId);
+
+    const { calculateDepreciationForYear, calculateDepreciationSummary } = require('../logic/depreciation.js');
+    const { calculateYearToDateFinancials, calculateTotalDepreciation, calculateTaxLiability } = require('../logic/financial.js');
 
     // Calculate financial summaries
     const financials = calculateYearToDateFinancials(transactions, taxYear);
@@ -67,7 +86,7 @@ router.get('/summary', authenticate, (req, res) => {
       tax_estimation: taxCalculation,
       recent_transactions: transactions.slice(0, 10), // Last 10 transactions
       summary_stats: {
-        q1_revenue: financials.total_income * 0.25, // Rough quarterly estimate
+        q1_revenue: financials.total_income * 0.25,
         q2_revenue: financials.total_income * 0.5,
         q3_revenue: financials.total_income * 0.75,
         q4_revenue: financials.total_income,
@@ -148,7 +167,6 @@ router.post('/transactions', authenticate, (req, res) => {
       vendor
     } = req.body;
 
-    // Validation
     if (!date || !type || !category || amount === undefined) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -161,13 +179,13 @@ router.post('/transactions', authenticate, (req, res) => {
       INSERT INTO transactions (
         user_id, date, type, category, amount,
         description, payment_method, venue, vendor
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       req.userId,
       date,
       type.toUpperCase(),
       category,
-      Math.floor(amount * 100), // Convert dollars to cents
+      Math.floor(amount * 100),
       description || null,
       payment_method || null,
       venue || null,
@@ -189,7 +207,6 @@ router.put('/transactions/:id', authenticate, (req, res) => {
     const transactionId = req.params.id;
     const updates = req.body;
 
-    // Check ownership
     const existing = db.prepare(`
       SELECT * FROM transactions WHERE id = ? AND user_id = ?
     `).get(transactionId, req.userId);
@@ -198,7 +215,6 @@ router.put('/transactions/:id', authenticate, (req, res) => {
       return res.status(404).json({ error: 'Transaction not found' });
     }
 
-    // Build update query
     const fields = [];
     const params = [];
 
@@ -206,7 +222,7 @@ router.put('/transactions/:id', authenticate, (req, res) => {
       if (key !== 'id' && key !== 'user_id' && key !== 'created_at') {
         fields.push(`${key} = ?`);
         if (key === 'amount') {
-          params.push(Math.floor(updates[key] * 100)); // Convert to cents
+          params.push(Math.floor(updates[key] * 100));
         } else {
           params.push(updates[key]);
         }
@@ -217,9 +233,8 @@ router.put('/transactions/:id', authenticate, (req, res) => {
       return res.status(400).json({ error: 'No valid fields to update' });
     }
 
-    // Add update timestamp
     fields.push('updated_at = datetime(\'now\')');
-    params.push(transactionId); // For WHERE id = ?
+    params.push(transactionId);
 
     db.prepare(
       `UPDATE transactions SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`
@@ -264,6 +279,8 @@ router.get('/assets', authenticate, (req, res) => {
       SELECT * FROM assets WHERE user_id = ? ORDER BY purchase_date DESC
     `).all(req.userId);
 
+    const { calculateDepreciationForYear } = require('../logic/depreciation.js');
+
     // Add depreciation calculations for each asset
     const assetsWithDepreciation = assets.map(asset => {
       const depreciationResult = calculateDepreciationForYear(asset, taxYear);
@@ -297,13 +314,11 @@ router.post('/assets', authenticate, (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    // Validate depreciation method
     const validMethods = ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100', 'BONUS_40', 'SECTION_179'];
     if (!validMethods.includes(depreciation_method)) {
       return res.status(400).json({ error: 'Invalid depreciation method' });
     }
 
-    // Validate equipment category (can be null, but must be valid if provided)
     if (equipment_category !== null && equipment_category !== undefined && equipment_category !== '') {
       const validCategories = ['TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'];
       if (!validCategories.includes(equipment_category)) {
@@ -317,12 +332,12 @@ router.post('/assets', authenticate, (req, res) => {
     const result = db.prepare(`
       INSERT INTO assets (
         user_id, name, purchase_date, cost_basis, depreciation_method, equipment_category, notes
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?)
     `).run(
       req.userId,
       name,
       purchase_date,
-      Math.floor(cost_basis * 100), // Convert dollars to cents
+      Math.floor(cost_basis * 100),
       depreciation_method,
       equipment_category || null,
       notes || null
@@ -333,7 +348,6 @@ router.post('/assets', authenticate, (req, res) => {
   } catch (error) {
     console.error('Asset creation error:', error);
 
-    // Provide more specific error messages based on error type
     if (error.code === 'SQLITE_CONSTRAINT') {
       if (error.message.includes('equipment_category')) {
         res.status(400).json({
@@ -367,7 +381,6 @@ router.put('/assets/:id/sell', authenticate, (req, res) => {
       return res.status(400).json({ error: 'Disposal date is required' });
     }
 
-    // Check ownership
     const existing = db.prepare(`
       SELECT * FROM assets WHERE id = ? AND user_id = ?
     `).get(assetId, req.userId);
@@ -394,7 +407,6 @@ router.put('/assets/:id/sell', authenticate, (req, res) => {
   } catch (error) {
     console.error('Asset disposal error:', error);
 
-    // Provide more specific error messages based on error type
     if (error.code === 'SQLITE_CONSTRAINT') {
       res.status(400).json({ error: 'Database constraint violation: ' + error.message });
     } else if (error.code === 'SQLITE_ERROR') {
@@ -412,7 +424,6 @@ router.put('/assets/:id', authenticate, (req, res) => {
     const assetId = req.params.id;
     const updates = req.body;
 
-    // Check ownership
     const existing = db.prepare(`
       SELECT * FROM assets WHERE id = ? AND user_id = ?
     `).get(assetId, req.userId);
@@ -421,7 +432,6 @@ router.put('/assets/:id', authenticate, (req, res) => {
       return res.status(404).json({ error: 'Asset not found' });
     }
 
-    // Validate equipment category if provided
     if (updates.equipment_category !== null && updates.equipment_category !== undefined && updates.equipment_category !== '') {
       const validCategories = ['TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'];
       if (!validCategories.includes(updates.equipment_category)) {
@@ -432,7 +442,6 @@ router.put('/assets/:id', authenticate, (req, res) => {
       }
     }
 
-    // Validate depreciation method if provided
     if (updates.depreciation_method) {
       const validMethods = ['ST_3YEAR', 'ST_5YEAR', 'ST_7YEAR', 'BONUS_100', 'BONUS_40', 'SECTION_179'];
       if (!validMethods.includes(updates.depreciation_method)) {
@@ -440,7 +449,6 @@ router.put('/assets/:id', authenticate, (req, res) => {
       }
     }
 
-    // Build update query
     const fields = [];
     const params = [];
 
@@ -448,7 +456,7 @@ router.put('/assets/:id', authenticate, (req, res) => {
       if (key !== 'id' && key !== 'user_id' && key !== 'created_at') {
         fields.push(`${key} = ?`);
         if (key === 'cost_basis') {
-          params.push(Math.floor(updates[key] * 100)); // Convert to cents
+          params.push(Math.floor(updates[key] * 100));
         } else {
           params.push(updates[key]);
         }
@@ -460,7 +468,7 @@ router.put('/assets/:id', authenticate, (req, res) => {
     }
 
     fields.push('updated_at = datetime(\'now\')');
-    params.push(assetId, req.userId); // For WHERE id = ? AND user_id = ?
+    params.push(assetId, req.userId);
 
     db.prepare(
       `UPDATE assets SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`
@@ -471,7 +479,6 @@ router.put('/assets/:id', authenticate, (req, res) => {
   } catch (error) {
     console.error('Asset update error:', error);
 
-    // Provide more specific error messages based on error type
     if (error.code === 'SQLITE_CONSTRAINT') {
       if (error.message.includes('equipment_category')) {
         res.status(400).json({
@@ -512,6 +519,223 @@ router.delete('/assets/:id', authenticate, (req, res) => {
   } catch (error) {
     console.error('Asset deletion error:', error);
     res.status(500).json({ error: 'Failed to delete asset' });
+  }
+});
+
+// Admin user management endpoints
+
+// GET /api/admin/users - List all users (admin only)
+router.get('/admin/users', authenticate, requireAdmin, (req, res) => {
+  try {
+    const db = getDatabase();
+    const users = db.prepare(`
+      SELECT id, username, role, created_at, last_activity, failed_attempts, locked_until
+      FROM users
+      ORDER BY created_at DESC
+    `).all();
+
+    res.json(users);
+  } catch (error) {
+    console.error('Get users error:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// POST /api/admin/users - Create new user (admin only)
+router.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const db = getDatabase();
+    const auth = await import('../auth/auth.js');
+    const { username, password, role = 'user' } = req.body;
+
+    if (!username || !password) {
+      return res.status(400).json({ error: 'Username and password required' });
+    }
+
+    if (!['admin', 'user'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const passwordValidation = auth.validatePassword(password);
+
+    if (!passwordValidation.valid) {
+      return res.status(400).json({ error: passwordValidation.error });
+    }
+
+    const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
+
+    if (existingUser) {
+      return res.status(400).json({ error: 'Username already exists' });
+    }
+
+    const bcrypt = await import('bcrypt');
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.default.hash(password, saltRounds);
+
+    const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(username, passwordHash, role);
+
+    const newUser = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(result.lastInsertRowid);
+
+    res.status(201).json(newUser);
+  } catch (error) {
+    console.error('Create user error:', error);
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+// PUT /api/admin/users/:id/password - Reset user password (admin only)
+router.put('/admin/users/:id/password', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const db = getDatabase();
+    const auth = await import('../auth/auth.js');
+    const userId = parseInt(req.params.id);
+    const { password } = req.body;
+
+    if (!password) {
+      return res.status(400).json({ error: 'Password required' });
+    }
+
+    const passwordValidation = auth.validatePassword(password);
+
+    if (!passwordValidation.valid) {
+      return res.status(400).json({ error: passwordValidation.error });
+    }
+
+    const existingUser = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const bcrypt = await import('bcrypt');
+    const saltRounds = 12;
+    const passwordHash = await bcrypt.default.hash(password, saltRounds);
+
+    db.prepare('UPDATE users SET password_hash = ?, failed_attempts = 0, locked_until = NULL WHERE id = ?').run(passwordHash, userId);
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Update password error:', error);
+    res.status(500).json({ error: 'Failed to update password' });
+  }
+});
+
+// PUT /api/admin/users/:id - Update user (admin only)
+router.put('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
+  try {
+    const db = getDatabase();
+    const userId = parseInt(req.params.id);
+    const { username, role } = req.body;
+
+    const existingUser = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (username) {
+      const usernameExists = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(username, userId);
+
+      if (usernameExists) {
+        return res.status(400).json({ error: 'Username already exists' });
+      }
+    }
+
+    if (role && !['admin', 'user'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role' });
+    }
+
+    const fields = [];
+    const params = [];
+
+    if (username) {
+      fields.push('username = ?');
+      params.push(username);
+    }
+
+    if (role) {
+      fields.push('role = ?');
+      params.push(role);
+    }
+
+    if (fields.length === 0) {
+      return res.status(400).json({ error: 'No valid fields to update' });
+    }
+
+    params.push(userId);
+
+    db.prepare(`UPDATE users SET ${fields.join(', ')} WHERE id = ?`).run(...params);
+
+    const updatedUser = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(userId);
+
+    res.json(updatedUser);
+  } catch (error) {
+    console.error('Update user error:', error);
+    res.status(500).json({ error: 'Failed to update user' });
+  }
+});
+
+// DELETE /api/admin/users/:id - Delete user (admin only)
+router.delete('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
+  try {
+    const db = getDatabase();
+    const userId = parseInt(req.params.id);
+
+    if (userId === req.userId) {
+      return res.status(400).json({ error: 'Cannot delete your own account' });
+    }
+
+    const existingUser = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+
+    if (!existingUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+
+    res.json({ message: 'User deleted successfully' });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({ error: 'Failed to delete user' });
+  }
+});
+
+// GET /api/admin/login-attempts - Get login attempts (admin only)
+router.get('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
+  try {
+    const db = getDatabase();
+    const limit = parseInt(req.query.limit) || 50;
+
+    const attempts = db.prepare(`
+      SELECT * FROM login_attempts
+      ORDER BY attempted_at DESC
+      LIMIT ?
+    `).all(limit);
+
+    const stats = {
+      totalAttempts: db.prepare('SELECT COUNT(*) as count FROM login_attempts').get().count,
+      successfulAttempts: db.prepare('SELECT COUNT(*) as count FROM login_attempts WHERE success = 1').get().count,
+      failedAttempts: db.prepare('SELECT COUNT(*) as count FROM login_attempts WHERE success = 0').get().count,
+      recentFailed: db.prepare(`SELECT COUNT(*) as count FROM login_attempts WHERE success = 0 AND attempted_at > datetime('now', '-15 minutes')`).get().count
+    };
+
+    res.json({ attempts, stats });
+  } catch (error) {
+    console.error('Get login attempts error:', error);
+    res.status(500).json({ error: 'Failed to fetch login attempts' });
+  }
+});
+
+// DELETE /api/admin/login-attempts - Clear login attempts (admin only)
+router.delete('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
+  try {
+    const db = getDatabase();
+    db.prepare('DELETE FROM login_attempts').run();
+
+    res.json({ message: 'Login attempts cleared successfully' });
+  } catch (error) {
+    console.error('Clear login attempts error:', error);
+    res.status(500).json({ error: 'Failed to clear login attempts' });
   }
 });
 

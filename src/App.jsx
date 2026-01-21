@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard.jsx'
 import Transactions from './pages/Transactions.jsx'
 import Assets from './pages/Assets.jsx'
 import Reports from './pages/Reports.jsx'
+import AdminPage from './pages/AdminPage.jsx'
 import NavBar from './components/NavBar.jsx'
 
 const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
@@ -134,6 +135,16 @@ function App() {
           <Route path="/transactions" element={<Transactions />} />
           <Route path="/assets" element={<Assets />} />
           <Route path="/reports" element={<Reports />} />
+          <Route
+            path="/admin"
+            element={
+              user?.role === 'admin' ? (
+                <AdminPage user={user} />
+              ) : (
+                <Navigate to="/" replace />
+              )
+            }
+          />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>

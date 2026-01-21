@@ -4,7 +4,8 @@ import {
   CurrencyDollarIcon,
   ShoppingBagIcon,
   ChartBarIcon,
-  UserIcon
+  UserIcon,
+  UserGroupIcon
 } from '@heroicons/react/24/outline'
 
 const navigation = [
@@ -12,6 +13,10 @@ const navigation = [
   { name: 'Transactions', href: '/transactions', icon: CurrencyDollarIcon },
   { name: 'Assets', href: '/assets', icon: ShoppingBagIcon },
   { name: 'Reports', href: '/reports', icon: ChartBarIcon }
+]
+
+const adminNavigation = [
+  { name: 'Users', href: '/admin', icon: UserGroupIcon }
 ]
 
 export default function NavBar({ user, onLogout }) {
@@ -30,7 +35,7 @@ export default function NavBar({ user, onLogout }) {
 
           {/* Navigation Links */}
           <div className="hidden md:flex space-x-8">
-            {navigation.map((item) => {
+            {[...navigation, ...(user?.role === 'admin' ? adminNavigation : [])].map((item) => {
               const Icon = item.icon
               const isActive = location.pathname === item.href
               return (
@@ -74,7 +79,7 @@ export default function NavBar({ user, onLogout }) {
         {/* Mobile Navigation */}
         <div className="md:hidden border-t border-gray-200">
           <div className="flex justify-around py-2">
-            {navigation.map((item) => {
+            {[...navigation, ...(user?.role === 'admin' ? adminNavigation : [])].map((item) => {
               const Icon = item.icon
               const isActive = location.pathname === item.href
               return (

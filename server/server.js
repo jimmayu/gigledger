@@ -23,25 +23,40 @@ try {
 const AUTH_MODE = process.env.AUTH_MODE || (process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled');
 console.log(`Authentication mode: ${AUTH_MODE}`);
 
-// Create default user when authentication is disabled
-if (AUTH_MODE === 'disabled') {
-  try {
-    // Check if default user exists
-    const defaultUser = db.prepare('SELECT id FROM users WHERE id = 1').get();
-    if (!defaultUser) {
-      // Create default user with a simple password hash (since it won't be used)
-      const defaultPasswordHash = '$2b$10$abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'; // Placeholder hash
-      db.prepare('INSERT OR IGNORE INTO users (id, username, password_hash) VALUES (?, ?, ?)').run(
-        1, 'default-user', defaultPasswordHash
-      );
-      console.log('Default user created for development');
-    } else {
-      console.log('Default user already exists');
+// Create default admin user when authentication is enabled
+const createAdminUser = async () => {
+  if (AUTH_MODE === 'enabled') {
+    try {
+      const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+      const adminPassword = process.env.ADMIN_PASSWORD;
+
+      if (!adminPassword) {
+        console.warn('WARNING: ADMIN_PASSWORD not set in .env. Please set a strong password for the admin user.');
+        return;
+      }
+
+      const existingAdmin = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
+
+      if (!existingAdmin) {
+        const bcrypt = await import('bcrypt');
+        const saltRounds = 12;
+        const passwordHash = await bcrypt.default.hash(adminPassword, saltRounds);
+
+        db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(
+          adminUsername, passwordHash, 'admin'
+        );
+        console.log(`Default admin user created. Username: ${adminUsername}`);
+      } else {
+        console.log('Admin user already exists');
+      }
+    } catch (error) {
+      console.error('Error creating admin user:', error);
     }
-  } catch (error) {
-    console.error('Error creating default user:', error);
   }
-}
+};
+
+// Initialize admin user
+createAdminUser();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -56,11 +71,11 @@ const normalizeBasePath = (raw) => {
 };
 
 const BASE_PATH = normalizeBasePath(process.env.GIGLEDGER_BASE_PATH);
-const API_BASE = `${BASE_PATH}/api`; // '' => '/api'
+const API_BASE = `${BASE_PATH}/api`;
 
 // Middleware
 app.use(cors({
-  origin: true, // Allow all origins in development
+  origin: true,
   credentials: true
 }));
 app.use(express.json());
@@ -81,7 +96,6 @@ app.get(`${API_BASE}/auth/mode`, (req, res) => {
 
 // User registration
 app.post(`${API_BASE}/auth/register`, async (req, res) => {
-  // When authentication is disabled, skip registration
   if (AUTH_MODE === 'disabled') {
     return res.status(200).json({
       message: 'Authentication disabled - using default user',
@@ -91,26 +105,29 @@ app.post(`${API_BASE}/auth/register`, async (req, res) => {
   }
 
   try {
-    const db = initDatabase(); // Get database instance
+    const db = initDatabase();
     const { username, password } = req.body;
 
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
-    // Check if user already exists
+    const auth = await import('./auth/auth.js');
+    const passwordValidation = auth.validatePassword(password);
+    if (!passwordValidation.valid) {
+      return res.status(400).json({ error: passwordValidation.error });
+    }
+
     const existingUser = db.prepare('SELECT id FROM users WHERE username = ?').get(username);
     if (existingUser) {
       return res.status(400).json({ error: 'Username already exists' });
     }
 
-    // Hash password
     const bcrypt = await import('bcrypt');
-    const saltRounds = 10;
+    const saltRounds = 12;
     const passwordHash = await bcrypt.default.hash(password, saltRounds);
 
-    // Create user
-    const result = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(username, passwordHash);
+    const result = db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(username, passwordHash, 'user');
 
     res.status(201).json({
       message: 'User created successfully',
@@ -124,13 +141,12 @@ app.post(`${API_BASE}/auth/register`, async (req, res) => {
 
 // User login
 app.post(`${API_BASE}/auth/login`, async (req, res) => {
-  // When authentication is disabled, automatically login as default user
   if (AUTH_MODE === 'disabled') {
     res.cookie('user_id', 1, {
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.secure,
       domain: process.env.COOKIE_DOMAIN || undefined
     });
 
@@ -141,38 +157,56 @@ app.post(`${API_BASE}/auth/login`, async (req, res) => {
   }
 
   try {
-    const db = initDatabase(); // Get database instance
+    const db = initDatabase();
+    const auth = await import('./auth/auth.js');
     const { username, password } = req.body;
+    const ipAddress = req.ip || req.connection.remoteAddress || 'unknown';
 
     if (!username || !password) {
       return res.status(400).json({ error: 'Username and password required' });
     }
 
-    // Find user
+    if (auth.isAccountLocked(username)) {
+      auth.recordLoginAttempt(username, ipAddress, false);
+      return res.status(429).json({ error: 'Account temporarily locked due to too many failed attempts. Please try again later.' });
+    }
+
+    const rateLimitCheck = auth.checkRateLimits(ipAddress, username);
+
+    if (rateLimitCheck.ipLimitReached || rateLimitCheck.usernameLimitReached) {
+      auth.recordLoginAttempt(username, ipAddress, false);
+      return res.status(429).json({ error: 'Too many failed attempts. Please try again later.' });
+    }
+
     const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+
     if (!user) {
+      auth.recordLoginAttempt(username, ipAddress, false);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Check password
     const bcrypt = await import('bcrypt');
     const isValidPassword = await bcrypt.default.compare(password, user.password_hash);
+
     if (!isValidPassword) {
+      auth.recordLoginAttempt(username, ipAddress, false);
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Set session cookie
+    auth.recordLoginAttempt(username, ipAddress, true);
+    auth.updateLastActivity(user.id);
+
     res.cookie('user_id', user.id, {
       httpOnly: true,
       maxAge: 7 * 24 * 60 * 60 * 1000,
       sameSite: 'lax',
-      secure: process.env.NODE_ENV === 'production',
+      secure: req.secure,
       domain: process.env.COOKIE_DOMAIN || undefined
     });
 
     res.json({
       message: 'Login successful',
-      user: { id: user.id, username: user.username }
+      user: { id: user.id, username: user.username, role: user.role }
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -187,26 +221,41 @@ app.post(`${API_BASE}/auth/logout`, (req, res) => {
 });
 
 // Get current user
-app.get(`${API_BASE}/auth/me`, (req, res) => {
-  // When authentication is disabled, return default user
+app.get(`${API_BASE}/auth/me`, async (req, res) => {
   if (AUTH_MODE === 'disabled') {
     return res.json({
-      user: { id: 1, username: 'default-user', created_at: new Date().toISOString() }
+      user: { id: 1, username: 'default-user', role: 'user', created_at: new Date().toISOString() }
     });
   }
 
   const userId = req.cookies?.user_id;
+
   if (!userId) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
 
-  const db = initDatabase();
-  const user = db.prepare('SELECT id, username, created_at FROM users WHERE id = ?').get(userId);
-  if (!user) {
-    return res.status(401).json({ error: 'User not found' });
-  }
+  try {
+    const auth = await import('./auth/auth.js');
 
-  res.json({ user });
+    if (!auth.isSessionValid(userId)) {
+      res.clearCookie('user_id');
+      return res.status(401).json({ error: 'Session expired. Please log in again.' });
+    }
+
+    auth.updateLastActivity(userId);
+
+    const db = initDatabase();
+    const user = db.prepare('SELECT id, username, role, created_at FROM users WHERE id = ?').get(userId);
+
+    if (!user) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    res.json({ user });
+  } catch (error) {
+    console.error('Get current user error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 // Serve the built frontend when running in production
@@ -263,7 +312,7 @@ if (process.env.NODE_ENV === 'production') {
 
 // Start server
 app.listen(PORT, '0.0.0.0', () => {
-  const lanIP = process.env.LAN_IP || '192.168.1.13'; // Default to the user's IP
+  const lanIP = process.env.LAN_IP || '192.168.1.13';
   console.log(`GigLedger server running on port ${PORT}`);
   console.log(`Local access: http://localhost:${PORT}`);
   console.log(`LAN access: http://${lanIP}:${PORT}`);
