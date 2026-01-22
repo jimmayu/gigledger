@@ -1,0 +1,7 @@
+# Ignore data directory to prevent database from being baked into Docker image
+data/
+
+# Ignore SQLite database files
+*.db
+*.db-shm
+*.db-wal

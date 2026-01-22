@@ -89,7 +89,7 @@ export function validatePassword(password) {
 
 export function updateLastActivity(userId) {
   const db = getDatabase();
-  db.prepare('UPDATE users SET last_activity = datetime("now") WHERE id = ?').run(userId);
+  db.prepare('UPDATE users SET last_activity = CURRENT_TIMESTAMP WHERE id = ?').run(userId);
 }
 
 export function isSessionValid(userId) {

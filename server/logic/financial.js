@@ -38,7 +38,7 @@ export function calculateYearToDateFinancials(transactions, year) {
  * @returns {number} Total depreciation deduction in dollars
  */
 export function calculateTotalDepreciation(assets) {
-  return assets.reduce((total, asset) => total + asset.depreciation_deduction, 0);
+  return (assets || []).reduce((total, asset) => total + (asset?.depreciation_deduction || 0), 0);
 }
 
 /**

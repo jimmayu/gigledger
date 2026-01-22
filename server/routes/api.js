@@ -1,5 +1,7 @@
 import express from 'express';
 import { getDatabase } from '../database/schema.js';
+import { calculateDepreciationForYear, calculateDepreciationSummary } from '../logic/depreciation.js';
+import { calculateYearToDateFinancials, calculateTotalDepreciation, calculateTaxLiability } from '../logic/financial.js';
 
 const router = express.Router();
 
@@ -64,10 +66,6 @@ router.get('/summary', authenticate, (req, res) => {
       SELECT * FROM assets WHERE user_id = ? ORDER BY purchase_date DESC
     `).all(req.userId);
 
-    const { calculateDepreciationForYear, calculateDepreciationSummary } = require('../logic/depreciation.js');
-    const { calculateYearToDateFinancials, calculateTotalDepreciation, calculateTaxLiability } = require('../logic/financial.js');
-
-    // Calculate financial summaries
     const financials = calculateYearToDateFinancials(transactions, taxYear);
     const depreciationResults = calculateDepreciationSummary(assets, taxYear);
     const totalDepreciation = calculateTotalDepreciation(depreciationResults);
@@ -86,16 +84,16 @@ router.get('/summary', authenticate, (req, res) => {
       tax_estimation: taxCalculation,
       recent_transactions: transactions.slice(0, 10), // Last 10 transactions
       summary_stats: {
-        q1_revenue: financials.total_income * 0.25,
-        q2_revenue: financials.total_income * 0.5,
-        q3_revenue: financials.total_income * 0.75,
-        q4_revenue: financials.total_income,
-        average_monthly_income: financials.total_income / 12,
-        average_monthly_expenses: financials.total_expenses / 12
+        q1_revenue: (financials?.total_income ?? 0) * 0.25,
+        q2_revenue: (financials?.total_income ?? 0) * 0.5,
+        q3_revenue: (financials?.total_income ?? 0) * 0.75,
+        q4_revenue: financials?.total_income ?? 0,
+        average_monthly_income: (financials?.total_income ?? 0) / 12,
+        average_monthly_expenses: (financials?.total_expenses ?? 0) / 12
       }
     });
   } catch (error) {
-    console.error('Summary API error:', error);
+    console.error('Summary API error:', error.message || error, error.stack);
     res.status(500).json({ error: 'Failed to generate financial summary' });
   }
 });
@@ -279,8 +277,6 @@ router.get('/assets', authenticate, (req, res) => {
       SELECT * FROM assets WHERE user_id = ? ORDER BY purchase_date DESC
     `).all(req.userId);
 
-    const { calculateDepreciationForYear } = require('../logic/depreciation.js');
-
     // Add depreciation calculations for each asset
     const assetsWithDepreciation = assets.map(asset => {
       const depreciationResult = calculateDepreciationForYear(asset, taxYear);
@@ -332,7 +328,7 @@ router.post('/assets', authenticate, (req, res) => {
     const result = db.prepare(`
       INSERT INTO assets (
         user_id, name, purchase_date, cost_basis, depreciation_method, equipment_category, notes
-      ) VALUES (?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(
       req.userId,
       name,

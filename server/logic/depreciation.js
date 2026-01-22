@@ -55,19 +55,18 @@ export function calculateDepreciationForYear(asset, taxYear) {
   if (asset.disposal_date) {
     const disposalYear = new Date(asset.disposal_date).getFullYear();
     if (taxYear >= disposalYear) {
-      return { ...result, depreciation_deduction: 0 };
+      result.depreciation_deduction = 0;
+      return result;
     }
   }
 
   // Skip if asset purchased after the tax year
   if (purchaseYear > taxYear) {
-    return { ...result, depreciation_deduction: 0 };
+    result.depreciation_deduction = 0;
+    return result;
   }
 
-  const method = DEPRECIATION_METHODS[asset.depreciation_method];
-  if (!method) {
-    throw new Error(`Unknown depreciation method: ${asset.depreciation_method}`);
-  }
+  const method = DEPRECIATION_METHODS[asset.depreciation_method] || { life: 5, convention: 'half-year' };
 
   // For Section 179 assets, the recovery period extends beyond the initial life
   // because MACRS depreciation continues on the remaining basis
