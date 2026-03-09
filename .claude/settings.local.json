@@ -75,7 +75,14 @@
       "WebFetch(domain:vitejs.dev)",
       "Bash([{'./server/logic/depreciation.js': \"Test with asset right at limit\\\\nconst asset1 = {\\\\n  id: ''test_at_limit''\", 'name': 'Test At Limit', 'purchase_date': '2025-01-01', 'cost_basis': 125000000, 'depreciation_method': 'SECTION_179'}, {'year}': 'Deduction=${result.depreciation_deduction.toFixed\\(2\\)'}, {'id': 'test_small', 'name': 'Test Small', 'purchase_date': '2025-01-01', 'cost_basis': 300000, 'depreciation_method': 'SECTION_179'}, {'year}': 'Deduction=${result.depreciation_deduction.toFixed\\(2\\)'}, {}])",
       "Bash([{'./server/logic/depreciation.js': \"Check the specific failing test case\\\\nconst asset = {\\\\n  id: ''test5''\", 'name': 'Test 5', 'purchase_date': '2025-03-01', 'cost_basis': 200000, 'depreciation_method': 'BONUS_40'}, {'deduction': 'result.depreciation_deduction', 'accumulated': 'result.accumulated_depreciation', 'remaining': 'result.remaining_basis'}])",
-      "Bash([{'./server/logic/depreciation.js': \"Test the exact scenario from the plan\\\\nconst asset = {\\\\n  id: ''plan_test''\", 'name': 'Plan Test Asset', 'purchase_date': '2025-03-01', 'cost_basis': 200000, 'depreciation_method': 'BONUS_40'}, {'year}': 'Deduction=${result.depreciation_deduction.toFixed\\(2\\)'}, {'requirement': \"Year 2029 should show 0 deduction and 2000.00 accumulated \\(not over-depreciated\\)''\\);\\\\nconsole.log\\(''✓ Plan requirement: Asset fully depreciated by year 2028 with final 176 deduction''\\);\"}])"
+      "Bash([{'./server/logic/depreciation.js': \"Test the exact scenario from the plan\\\\nconst asset = {\\\\n  id: ''plan_test''\", 'name': 'Plan Test Asset', 'purchase_date': '2025-03-01', 'cost_basis': 200000, 'depreciation_method': 'BONUS_40'}, {'year}': 'Deduction=${result.depreciation_deduction.toFixed\\(2\\)'}, {'requirement': \"Year 2029 should show 0 deduction and 2000.00 accumulated \\(not over-depreciated\\)''\\);\\\\nconsole.log\\(''✓ Plan requirement: Asset fully depreciated by year 2028 with final 176 deduction''\\);\"}])",
+      "Bash(docker:*)",
+      "Bash(kill -9:*)",
+      "Bash(docker-compose down)",
+      "Bash(docker-compose up:*)",
+      "Bash([['0-9'], ['0-9']])",
+      "Bash({'username': 'testuser', 'password': 'testpassword'})",
+      "Bash({'username': 'testuser2', 'password': 'testpassword'})"
     ]
   }
 }

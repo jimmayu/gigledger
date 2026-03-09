@@ -2,6 +2,7 @@ import express from 'express';
 import { getDatabase } from '../database/schema.js';
 import { calculateDepreciationForYear, calculateDepreciationSummary } from '../logic/depreciation.js';
 import { calculateYearToDateFinancials, calculateTotalDepreciation, calculateTaxLiability } from '../logic/financial.js';
+import { logAudit, businessLogger } from '../utils/logger.js';
 
 const router = express.Router();
 
@@ -20,7 +21,7 @@ const authenticate = (req, res, next) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  const db = getDatabase();
+  const db = getRequestDb(req);
   const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(userId);
 
   if (!user) {
@@ -53,18 +54,19 @@ const requireAdmin = (req, res, next) => {
 // GET /api/summary - Dashboard financial summary for tax year
 router.get('/summary', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const taxYear = parseInt(req.query.year) || new Date().getFullYear();
+    const userId = req.userId;
 
     // Get all transactions for the user
     const transactions = db.prepare(`
       SELECT * FROM transactions WHERE user_id = ? ORDER BY date DESC
-    `).all(req.userId);
+    `).all(userId);
 
     // Get all assets for depreciation calculation
     const assets = db.prepare(`
       SELECT * FROM assets WHERE user_id = ? ORDER BY purchase_date DESC
-    `).all(req.userId);
+    `).all(userId);
 
     const financials = calculateYearToDateFinancials(transactions, taxYear);
     const depreciationResults = calculateDepreciationSummary(assets, taxYear);
@@ -101,7 +103,7 @@ router.get('/summary', authenticate, (req, res) => {
 // GET /api/transactions - Get all transactions with filtering
 router.get('/transactions', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const {
       year,
       month,
@@ -153,7 +155,7 @@ router.get('/transactions', authenticate, (req, res) => {
 // POST /api/transactions - Add new transaction
 router.post('/transactions', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const {
       date,
       type,
@@ -177,7 +179,7 @@ router.post('/transactions', authenticate, (req, res) => {
       INSERT INTO transactions (
         user_id, date, type, category, amount,
         description, payment_method, venue, vendor
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       req.userId,
       date,
@@ -191,9 +193,33 @@ router.post('/transactions', authenticate, (req, res) => {
     );
 
     const newTransaction = db.prepare('SELECT * FROM transactions WHERE id = ?').get(result.lastInsertRowid);
+
+    // Audit log the transaction creation
+    logAudit('CREATE', 'transaction', newTransaction.id, {
+      old_values: null,
+      new_values: {
+        date: newTransaction.date,
+        type: newTransaction.type,
+        category: newTransaction.category,
+        amount_cents: newTransaction.amount,
+        amount_dollars: (newTransaction.amount / 100).toFixed(2),
+        description: newTransaction.description,
+        payment_method: newTransaction.payment_method
+      }
+    }, {
+      userId: req.userId,
+      requestId: req.requestId
+    });
+
     res.status(201).json(newTransaction);
   } catch (error) {
-    console.error('Transaction creation error:', error);
+    businessLogger.error({
+      error: error.message,
+      stack: error.stack,
+      requestId: req.requestId,
+      userId: req.userId,
+      transactionData: req.body
+    }, 'Transaction creation failed');
     res.status(500).json({ error: 'Failed to create transaction' });
   }
 });
@@ -201,7 +227,7 @@ router.post('/transactions', authenticate, (req, res) => {
 // PUT /api/transactions/:id - Update transaction
 router.put('/transactions/:id', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const transactionId = req.params.id;
     const updates = req.body;
 
@@ -249,7 +275,7 @@ router.put('/transactions/:id', authenticate, (req, res) => {
 // DELETE /api/transactions/:id - Delete transaction
 router.delete('/transactions/:id', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const transactionId = req.params.id;
 
     const result = db.prepare(`
@@ -270,7 +296,7 @@ router.delete('/transactions/:id', authenticate, (req, res) => {
 // GET /api/assets - Get all assets
 router.get('/assets', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const taxYear = parseInt(req.query.year) || new Date().getFullYear();
 
     const assets = db.prepare(`
@@ -296,7 +322,7 @@ router.get('/assets', authenticate, (req, res) => {
 // POST /api/assets - Add new asset
 router.post('/assets', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const {
       name,
       purchase_date,
@@ -340,9 +366,32 @@ router.post('/assets', authenticate, (req, res) => {
     );
 
     const newAsset = db.prepare('SELECT * FROM assets WHERE id = ?').get(result.lastInsertRowid);
+
+    // Audit log the asset creation
+    logAudit('CREATE', 'asset', newAsset.id, {
+      old_values: null,
+      new_values: {
+        name: newAsset.name,
+        purchase_date: newAsset.purchase_date,
+        cost_basis_cents: newAsset.cost_basis,
+        cost_basis_dollars: (newAsset.cost_basis / 100).toFixed(2),
+        depreciation_method: newAsset.depreciation_method,
+        equipment_category: newAsset.equipment_category
+      }
+    }, {
+      userId: req.userId,
+      requestId: req.requestId
+    });
+
     res.status(201).json(newAsset);
   } catch (error) {
-    console.error('Asset creation error:', error);
+    businessLogger.error({
+      error: error.message,
+      code: error.code,
+      requestId: req.requestId,
+      userId: req.userId,
+      assetData: req.body
+    }, 'Asset creation failed');
 
     if (error.code === 'SQLITE_CONSTRAINT') {
       if (error.message.includes('equipment_category')) {
@@ -369,7 +418,7 @@ router.post('/assets', authenticate, (req, res) => {
 // PUT /api/assets/:id/sell - Mark asset as sold
 router.put('/assets/:id/sell', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const assetId = req.params.id;
     const { disposal_date, disposal_price } = req.body;
 
@@ -416,7 +465,7 @@ router.put('/assets/:id/sell', authenticate, (req, res) => {
 // PUT /api/assets/:id - Update asset
 router.put('/assets/:id', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const assetId = req.params.id;
     const updates = req.body;
 
@@ -500,7 +549,7 @@ router.put('/assets/:id', authenticate, (req, res) => {
 // DELETE /api/assets/:id - Delete asset
 router.delete('/assets/:id', authenticate, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const assetId = req.params.id;
 
     const result = db.prepare(`
@@ -523,7 +572,7 @@ router.delete('/assets/:id', authenticate, (req, res) => {
 // GET /api/admin/users - List all users (admin only)
 router.get('/admin/users', authenticate, requireAdmin, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const users = db.prepare(`
       SELECT id, username, role, created_at, last_activity, failed_attempts, locked_until
       FROM users
@@ -540,7 +589,7 @@ router.get('/admin/users', authenticate, requireAdmin, (req, res) => {
 // POST /api/admin/users - Create new user (admin only)
 router.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const auth = await import('../auth/auth.js');
     const { username, password, role = 'user' } = req.body;
 
@@ -582,7 +631,7 @@ router.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
 // PUT /api/admin/users/:id/password - Reset user password (admin only)
 router.put('/admin/users/:id/password', authenticate, requireAdmin, async (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const auth = await import('../auth/auth.js');
     const userId = parseInt(req.params.id);
     const { password } = req.body;
@@ -619,7 +668,7 @@ router.put('/admin/users/:id/password', authenticate, requireAdmin, async (req, 
 // PUT /api/admin/users/:id - Update user (admin only)
 router.put('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const userId = parseInt(req.params.id);
     const { username, role } = req.body;
 
@@ -674,7 +723,7 @@ router.put('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
 // DELETE /api/admin/users/:id - Delete user (admin only)
 router.delete('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const userId = parseInt(req.params.id);
 
     if (userId === req.userId) {
@@ -699,7 +748,7 @@ router.delete('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
 // GET /api/admin/login-attempts - Get login attempts (admin only)
 router.get('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     const limit = parseInt(req.query.limit) || 50;
 
     const attempts = db.prepare(`
@@ -725,7 +774,7 @@ router.get('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
 // DELETE /api/admin/login-attempts - Clear login attempts (admin only)
 router.delete('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
   try {
-    const db = getDatabase();
+    const db = getRequestDb(req);
     db.prepare('DELETE FROM login_attempts').run();
 
     res.json({ message: 'Login attempts cleared successfully' });

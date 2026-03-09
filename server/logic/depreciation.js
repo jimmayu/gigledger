@@ -27,7 +27,10 @@ export const DEPRECIATION_METHODS = {
  * @param {number} taxYear - Tax year (e.g., 2024)
  * @returns {Object} Depreciation calculation results
  */
+import { logPerformance } from '../utils/logger.js';
+
 export function calculateDepreciationForYear(asset, taxYear) {
+  const startTime = performance.now();
     // 
 
   // Parse date in local timezone to avoid UTC issues
@@ -239,11 +242,20 @@ export function calculateDepreciationForYear(asset, taxYear) {
     deduction = remainingBasis;
   }
 
-  result.depreciation_deduction = deduction;
-  result.accumulated_depreciation = accumulatedDepreciation + deduction;
-  result.remaining_basis = remainingBasis - deduction;
+   result.depreciation_deduction = deduction;
+   result.accumulated_depreciation = accumulatedDepreciation + deduction;
+   result.remaining_basis = remainingBasis - deduction;
 
-  return result;
+   // Log performance metrics
+   const duration = performance.now() - startTime;
+   logPerformance('calculateDepreciationForYear', duration, {
+     asset_id: asset.id,
+     tax_year: taxYear,
+     depreciation_method: asset.depreciation_method,
+     deduction_amount: deduction
+   });
+
+   return result;
 }
 
 /**

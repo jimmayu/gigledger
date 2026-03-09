@@ -3,6 +3,11 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import { initDatabase } from './database/schema.js';
 import apiRoutes from './routes/api.js';
+import { requestCorrelationMiddleware, performanceMonitoringMiddleware, startMemoryHeartbeat } from './middleware/monitoring.js';
+import { auditMiddleware, logAuthEvent } from './middleware/audit.js';
+import { demoModeMiddleware } from './middleware/demoMode.js';
+import { getDemoDatabase, DEMO_USER_ID } from './database/demoDatabase.js';
+import { logger } from './utils/logger.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -13,14 +18,16 @@ const __dirname = path.dirname(__filename);
 const PORT = process.env.PORT || 3000;
 const API_BASE = '/api';
 const BASE_PATH = process.env.GIGLEDGER_BASE_PATH || '';
+const DEMO_RATE_LIMIT_WINDOW_MS = parseInt(process.env.DEMO_RATE_LIMIT_WINDOW_MS, 10) || 60 * 1000;
+const DEMO_RATE_LIMIT_MAX_REQUESTS = parseInt(process.env.DEMO_RATE_LIMIT_MAX_REQUESTS, 10) || 3;
 
 // Initialize database
 let db;
 try {
   db = initDatabase();
-  console.log('Database initialized successfully');
+  logger.info('Database initialized successfully');
 } catch (error) {
-  console.error('Failed to initialize database:', error);
+  logger.error({ error: error.message, stack: error.stack }, 'Failed to initialize database');
   process.exit(1);
 }
 
@@ -33,61 +40,66 @@ app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Monitoring middleware (must be before routes)
+app.use(requestCorrelationMiddleware);
+app.use(performanceMonitoringMiddleware);
+app.use(auditMiddleware);
+
 // Authentication mode configuration
 const AUTH_MODE = process.env.AUTH_MODE || (process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled');
-console.log(`Authentication mode: ${AUTH_MODE}`);
+logger.info({ authMode: AUTH_MODE }, 'Authentication configuration loaded');
 
 // Create default admin user when authentication is enabled
 const createAdminUser = async () => {
   if (AUTH_MODE === 'enabled') {
-    console.log('Attempting to create admin user...');
+    logger.info('Attempting to create admin user');
     try {
       const adminUsername = process.env.ADMIN_USERNAME || 'admin';
       // Default secure password - CHANGE THIS IMMEDIATELY AFTER FIRST LOGIN!
       const adminPassword = 'gigledger-change-me-2026!';
 
-      console.log(`Admin username: ${adminUsername}`);
-      console.log(`Using default admin password: ${adminPassword}`);
-      console.log('');
-      console.log('🚨 SECURITY WARNING: Default admin password in use!');
-      console.log('🚨 Login with: admin / gigledger-change-me-2026!');
+      // Keep security warnings as console.log for high visibility during startup
+      console.log(`🚨 SECURITY WARNING: Default admin password in use!`);
+      console.log(`🚨 Login with: ${adminUsername} / ${adminPassword}`);
       console.log('🚨 Go to Admin Panel → Change Password IMMEDIATELY!');
       console.log('🚨 NEVER use default password in production!');
       console.log('');
 
       const existingAdmin = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
-      console.log(`Existing admin user check: ${existingAdmin ? 'found' : 'not found'}`);
+      logger.info({ existingAdmin: !!existingAdmin }, 'Admin user existence check');
 
       if (!existingAdmin) {
-        console.log('Importing bcrypt...');
+        logger.info('Importing bcrypt for password hashing');
         let bcrypt;
         try {
           bcrypt = await import('bcrypt');
-          console.log('Bcrypt imported successfully');
+          logger.info('Bcrypt imported successfully');
         } catch (importError) {
-          console.error('Failed to import bcrypt:', importError);
+          logger.error({ error: importError.message }, 'Failed to import bcrypt');
           throw importError;
         }
         const saltRounds = 12;
-        console.log('Hashing admin password...');
+        logger.info({ saltRounds }, 'Hashing admin password');
         const passwordHash = bcrypt.default.hashSync(adminPassword, saltRounds);
-        console.log('Password hashed successfully');
+        logger.info('Password hashed successfully');
 
-        console.log('Inserting admin user into database...');
+        logger.info({ adminUsername }, 'Inserting admin user into database');
         db.prepare('INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)').run(
           adminUsername, passwordHash, 'admin'
         );
-        console.log(`✓ Default admin user created successfully. Username: ${adminUsername}`);
+        logger.info({ adminUsername }, 'Default admin user created successfully');
+
       } else {
-        console.log('✓ Admin user already exists');
+        logger.info('Admin user already exists');
       }
     } catch (error) {
-      console.error('✗ Error creating admin user:', error);
-      console.error('Error details:', error.message);
-      console.error('Stack trace:', error.stack);
+      logger.error({
+        error: error.message,
+        stack: error.stack
+      }, 'Error creating admin user');
     }
   } else {
-    console.log('Authentication disabled - skipping admin user creation');
+    logger.info('Authentication disabled - skipping admin user creation');
   }
 };
 
@@ -203,27 +215,41 @@ const createAdminUser = async () => {
       const isValidPassword = await bcrypt.default.compare(password, user.password_hash);
 
       if (!isValidPassword) {
+        // Audit log failed login attempt
+        logAuthEvent('LOGIN', username, false, req);
         auth.recordLoginAttempt(username, ipAddress, false);
         return res.status(401).json({ error: 'Invalid credentials' });
       }
 
-      auth.recordLoginAttempt(username, ipAddress, true);
-      auth.updateLastActivity(user.id);
+       auth.recordLoginAttempt(username, ipAddress, true);
+       auth.updateLastActivity(user.id);
 
-      res.cookie('user_id', user.id, {
-        httpOnly: true,
-        maxAge: 7 * 24 * 60 * 60 * 1000,
-        sameSite: 'lax',
-        secure: req.secure,
-        domain: process.env.COOKIE_DOMAIN || undefined
-      });
+       // Audit log successful login
+       logAuthEvent('LOGIN', username, true, req, {
+         userId: user.id,
+         role: user.role
+       });
 
-      res.json({
-        message: 'Login successful',
-        user: { id: user.id, username: user.username, role: user.role }
-      });
+       res.cookie('user_id', user.id, {
+         httpOnly: true,
+         maxAge: 7 * 24 * 60 * 60 * 1000,
+         sameSite: 'lax',
+         secure: req.secure,
+         domain: process.env.COOKIE_DOMAIN || undefined
+       });
+
+       res.json({
+         message: 'Login successful',
+         user: { id: user.id, username: user.username, role: user.role }
+       });
     } catch (error) {
-      console.error('Login error:', error);
+      logger.error({
+        error: error.message,
+        stack: error.stack,
+        requestId: req.requestId,
+        username: req.body?.username,
+        ip: req.ip
+      }, 'Login processing error');
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -325,15 +351,31 @@ const createAdminUser = async () => {
   }
 
   // Start server
+  // Start memory monitoring heartbeat
+  const stopMemoryHeartbeat = startMemoryHeartbeat();
+
   app.listen(PORT, '0.0.0.0', () => {
-    const lanIP = process.env.LAN_IP || '192.168.1.13';
-    console.log(`GigLedger server running on port ${PORT}`);
-    console.log(`Local access: http://localhost:${PORT}`);
-    console.log(`LAN access: http://${lanIP}:${PORT}`);
-    console.log(`API Health check: http://localhost:${PORT}${API_BASE}/health`);
+    logger.info({
+      port: PORT,
+      apiBase: API_BASE,
+      authMode: AUTH_MODE,
+      monitoring: ['request_correlation', 'performance_tracking', 'memory_heartbeat', 'audit_logging']
+    }, 'GigLedger server started successfully');
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    logger.info('SIGTERM received, shutting down gracefully');
+    stopMemoryHeartbeat();
+    process.exit(0);
+  });
+
+  process.on('SIGINT', () => {
+    logger.info('SIGINT received, shutting down gracefully');
+    stopMemoryHeartbeat();
+    process.exit(0);
   });
 })();
-
 
 
 

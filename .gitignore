@@ -7,3 +7,27 @@ data/
 .DS_Store
 client/node_modules/
 docker-compose.yml
+cookies.txt
+*.tgz
+*.db
+*.log
+
+# AI Memory & State (retain locally but never commit)
+LONG_TERM_MEMORY.md
+.opencode-memory/
+.claude/
+.anthropic/
+.aider.chat.history.md
+.aider.input.history
+
+# Temporary test and development files
+stress_test.js
+test_*.js
+docker_logs.txt
+*_SUMMARY.md
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo

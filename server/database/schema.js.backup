@@ -2,7 +2,6 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { logger } from '../utils/logger.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -66,23 +65,6 @@ export const SCHEMA = {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users (id)
-    )`,
-
-  // Audit logs for financial data changes and security events
-  audit_logs: `
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER,
-      action TEXT NOT NULL CHECK(action IN ('CREATE', 'UPDATE', 'DELETE', 'LOGIN', 'LOGOUT')),
-      entity_type TEXT NOT NULL CHECK(entity_type IN ('transaction', 'asset', 'user', 'auth')),
-      entity_id TEXT,  -- Can be ID or username depending on entity_type
-      old_values TEXT, -- JSON string of previous values (sanitized)
-      new_values TEXT, -- JSON string of new values (sanitized)
-      ip_address TEXT,
-      user_agent TEXT,
-      request_id TEXT, -- Correlation ID for request tracing
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (user_id) REFERENCES users (id)
     )`
 };
 
@@ -107,51 +89,64 @@ function needsMigration(db) {
 // Apply migration to existing database
 function applyMigration(db) {
   try {
-    logger.info('Starting database migration');
+    console.log('Starting database migration...');
 
-    // Add role column to users table
-    const userColumns = db.prepare("PRAGMA table_info(users)").all();
-    if (!userColumns.some(column => column.name === 'role')) {
-      logger.info('Adding role column to users table');
-      db.exec('ALTER TABLE users ADD COLUMN role TEXT DEFAULT \'user\' CHECK(role IN (\'admin\', \'user\'))');
-    }
+    const migrationTransaction = db.transaction(() => {
+      const userColumns = db.prepare("PRAGMA table_info(users)").all();
+      const hasRoleColumn = userColumns.some(column => column.name === 'role');
+      const hasFailedAttemptsColumn = userColumns.some(column => column.name === 'failed_attempts');
+      const hasLockedUntilColumn = userColumns.some(column => column.name === 'locked_until');
+      const hasLastActivityColumn = userColumns.some(column => column.name === 'last_activity');
 
-    // Add failed_attempts column
-    if (!userColumns.some(column => column.name === 'failed_attempts')) {
-      logger.info('Adding failed_attempts column to users table');
-      db.exec('ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0');
-    }
+      if (!hasRoleColumn) {
+        console.log('Adding role column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK(role IN ('admin', 'user'))");
+      }
 
-    // Add locked_until column
-    if (!userColumns.some(column => column.name === 'locked_until')) {
-      logger.info('Adding locked_until column to users table');
-      db.exec('ALTER TABLE users ADD COLUMN locked_until DATETIME');
-    }
+      if (!hasFailedAttemptsColumn) {
+        console.log('Adding failed_attempts column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN failed_attempts INTEGER DEFAULT 0");
+      }
 
-    // Add last_activity column
-    if (!userColumns.some(column => column.name === 'last_activity')) {
-      logger.info('Adding last_activity column to users table');
-      db.exec('ALTER TABLE users ADD COLUMN last_activity DATETIME');
-    }
+      if (!hasLockedUntilColumn) {
+        console.log('Adding locked_until column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN locked_until DATETIME");
+      }
 
-    // Create login_attempts table if it doesn't exist
-    const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'").get();
-    if (!tables) {
-      logger.info('Creating login_attempts table');
-      db.exec(SCHEMA.login_attempts);
-    }
+      if (!hasLastActivityColumn) {
+        console.log('Adding last_activity column to users table...');
+        db.exec("ALTER TABLE users ADD COLUMN last_activity DATETIME");
+      }
 
-    // Add equipment_category column to assets table
-    const assetColumns = db.prepare("PRAGMA table_info(assets)").all();
-    if (!assetColumns.some(column => column.name === 'equipment_category')) {
-      logger.info('Adding equipment_category column to assets table');
-      db.exec('ALTER TABLE assets ADD COLUMN equipment_category TEXT CHECK(equipment_category IN (\'TECHNOLOGY_COMPUTING\', \'INSTRUMENTS_SOUND\', \'STAGE_STUDIO\', \'TRANSPORTATION\'))');
-    }
+      const loginAttemptsTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='login_attempts'").get();
+      if (!loginAttemptsTable) {
+        console.log('Creating login_attempts table...');
+        db.exec(`
+          CREATE TABLE login_attempts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT,
+            ip_address TEXT,
+            success BOOLEAN NOT NULL,
+            attempted_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          )
+        `);
+      }
 
-    logger.info('Database migration completed successfully');
+      const assetColumns = db.prepare("PRAGMA table_info(assets)").all();
+      const hasEquipmentCategory = assetColumns.some(column => column.name === 'equipment_category');
+
+      if (!hasEquipmentCategory) {
+        console.log('Adding equipment_category column to assets table...');
+        db.exec("ALTER TABLE assets ADD COLUMN equipment_category TEXT CHECK(equipment_category IN ('TECHNOLOGY_COMPUTING', 'INSTRUMENTS_SOUND', 'STAGE_STUDIO', 'TRANSPORTATION'))");
+      }
+
+      console.log('Database migration completed successfully');
+    });
+
+    migrationTransaction();
     return true;
   } catch (error) {
-    logger.error({ error: error.message, stack: error.stack }, 'Database migration failed');
+    console.error('Database migration failed:', error);
     return false;
   }
 }
@@ -161,20 +156,20 @@ let db;
 
 export function initDatabase(dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../../data/ledger.db')) {
   try {
+    console.log('Database path:', dbPath);
+    console.log('__dirname:', __dirname);
+    console.log('Resolved path:', path.resolve(dbPath));
+    console.log('Environment DATABASE_PATH:', process.env.DATABASE_PATH);
+
     // Ensure the directory exists
     const dbDir = path.dirname(dbPath);
-    logger.info({
-      dbPath: dbPath,
-      dbDir: dbDir,
-      envDbPath: process.env.DATABASE_PATH
-    }, 'Initializing database');
-
+    console.log('Database directory:', dbDir);
     if (!fs.existsSync(dbDir)) {
-      logger.info({ dbDir }, 'Creating database directory');
+      console.log('Creating database directory...');
       fs.mkdirSync(dbDir, { recursive: true });
-      logger.info('Database directory created');
+      console.log('Database directory created');
     } else {
-      logger.debug('Database directory exists');
+      console.log('Database directory exists');
     }
 
     db = new Database(dbPath);
@@ -189,18 +184,18 @@ export function initDatabase(dbPath = process.env.DATABASE_PATH || path.join(__d
 
     // Check if migration is needed and apply it
     if (needsMigration(db)) {
-      logger.info('Database migration needed');
+      console.log('Database migration needed');
       if (applyMigration(db)) {
-        logger.info('Database migrated successfully');
+        console.log('Database migrated successfully');
       } else {
-        logger.error('Database migration failed');
+        console.error('Failed to migrate database');
         throw new Error('Database migration failed');
       }
     } else {
-      logger.info('Database schema is up to date');
+      console.log('Database schema is up to date');
     }
 
-    logger.info('Database initialized successfully');
+    console.log('Database initialized successfully');
     return db;
   } catch (error) {
     console.error('Database initialization failed:', error);

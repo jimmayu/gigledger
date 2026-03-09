@@ -7,6 +7,7 @@ const API_BASE = import.meta.env.BASE_URL.replace(/\/$/, '') + '/api'
 export default function Dashboard() {
   const [summary, setSummary] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [taxYear, setTaxYear] = useState(new Date().getFullYear())
   const [showAddModal, setShowAddModal] = useState(false)
 
@@ -16,15 +17,21 @@ export default function Dashboard() {
 
   const loadSummary = async () => {
     try {
+      setError(null) // Reset error on retry
       const response = await fetch(`${API_BASE}/summary?year=${taxYear}`, {
         credentials: 'include'
       })
       if (response.ok) {
         const data = await response.json()
         setSummary(data)
+      } else {
+        // Handle API errors
+        const errorData = await response.json().catch(() => ({}))
+        setError(errorData.error || `Failed to load dashboard data: ${response.status}`)
       }
     } catch (error) {
       console.error('Failed to load summary:', error)
+      setError(error.message || 'Network error occurred. Please check your connection.')
     } finally {
       setLoading(false)
     }
@@ -41,6 +48,38 @@ export default function Dashboard() {
     return (
       <div className="flex items-center justify-center min-h-96">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-96 flex items-center justify-center px-4">
+        <div className="max-w-md w-full bg-white rounded-lg shadow-lg p-6">
+          <div className="flex items-center mb-4">
+            <div className="flex-shrink-0">
+              <svg className="h-8 w-8 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+              </svg>
+            </div>
+            <div className="ml-3">
+              <h2 className="text-lg font-medium text-gray-900">
+                Failed to load dashboard
+              </h2>
+            </div>
+          </div>
+          <div className="mb-4">
+            <p className="text-sm text-gray-600">
+              {error}
+            </p>
+          </div>
+          <button
+            onClick={loadSummary}
+            className="w-full bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          >
+            Try Again
+          </button>
+        </div>
       </div>
     )
   }

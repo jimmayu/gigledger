@@ -1,6 +1,8 @@
 // Financial calculation utilities for GigLedger
 // All currency calculations use integers (cents) to avoid floating point errors
 
+import { perfLogger, logPerformance, businessLogger, logValidation } from '../utils/logger.js';
+
 /**
  * Calculate YTD (Year-to-Date) income and expenses
  * @param {Array} transactions - Array of transaction objects
@@ -8,12 +10,34 @@
  * @returns {Object} YTD financial summary
  */
 export function calculateYearToDateFinancials(transactions, year) {
-  const ytdTransactions = transactions.filter(t => {
-    const transactionYear = new Date(t.date).getFullYear();
-    return transactionYear === year;
-  });
+  const startTime = performance.now();
 
-  const income = ytdTransactions
+  const ytdTransactions = transactions.filter(t => {
+    try {
+      // Parse date in YYYY-MM-DD format to avoid timezone issues
+      const dateStr = String(t.date || '');
+      if (!dateStr.includes('-')) {
+        logValidation('date_format', false, {
+          date_value: t.date,
+          expected_format: 'YYYY-MM-DD'
+        });
+        return false; // Invalid date format
+      }
+      const dateParts = dateStr.split('-');
+      const transactionYear = parseInt(dateParts[0]);
+      return transactionYear === year;
+    } catch (error) {
+      // If date parsing fails, exclude this transaction
+      logValidation('date_parsing', false, {
+        date_value: t.date,
+        error: error.message,
+        transaction_id: t.id
+      });
+      return false;
+    }
+   });
+
+   const income = ytdTransactions
     .filter(t => t.type === 'INCOME')
     .reduce((sum, t) => sum + (t.amount || 0), 0);
 
@@ -21,7 +45,16 @@ export function calculateYearToDateFinancials(transactions, year) {
     .filter(t => t.type === 'EXPENSE')
     .reduce((sum, t) => sum + (t.amount || 0), 0);
 
-  return {
+  // Log validation summary
+  logValidation('financial_calculation', true, {
+    total_transactions: transactions.length,
+    ytd_transactions: ytdTransactions.length,
+    tax_year: year,
+    total_income: income / 100,
+    total_expenses: expenses / 100
+  });
+
+  const result = {
     year,
     total_income: income / 100, // Convert cents to dollars
     total_expenses: expenses / 100,
@@ -30,6 +63,17 @@ export function calculateYearToDateFinancials(transactions, year) {
     income_transactions: ytdTransactions.filter(t => t.type === 'INCOME').length,
     expense_transactions: ytdTransactions.filter(t => t.type === 'EXPENSE').length
   };
+
+  // Log performance metrics
+  const duration = performance.now() - startTime;
+  logPerformance('calculateYearToDateFinancials', duration, {
+    transaction_count: transactions.length,
+    ytd_transaction_count: ytdTransactions.length,
+    year,
+    total_income: result.total_income
+  });
+
+  return result;
 }
 
 /**
