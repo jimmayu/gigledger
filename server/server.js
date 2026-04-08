@@ -9,6 +9,7 @@ import { demoModeMiddleware } from './middleware/demoMode.js';
 import { getDemoDatabase, DEMO_USER_ID } from './database/demoDatabase.js';
 import { logger } from './utils/logger.js';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -305,9 +306,9 @@ const createAdminUser = async () => {
     }
   });
 
-  // Serve the built frontend when running in production
-  if (process.env.NODE_ENV === 'production') {
-    const distPath = path.join(__dirname, '..', 'dist');
+  // Serve the built frontend whenever dist/ is present
+  const distPath = path.join(__dirname, '..', 'dist');
+  if (fs.existsSync(path.join(distPath, 'index.html'))) {
 
     // Custom static file handler with explicit MIME types
     const serveStaticWithMimeTypes = express.static(distPath, {

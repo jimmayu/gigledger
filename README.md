@@ -1,5 +1,7 @@
 # GigLedger
 
+**[Live Demo](https://gigledger-mq6a.onrender.com)** — read-only, no login required
+
 A self-hosted financial ledger for freelancers and small business owners. Track income, expenses, and equipment assets with IRS-compliant depreciation calculations and tax estimates.
 
 ## Features

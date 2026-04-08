@@ -19,12 +19,13 @@ COPY . .
 # Build frontend assets for production
 ARG GIGLEDGER_BASE_PATH=
 ENV GIGLEDGER_BASE_PATH=${GIGLEDGER_BASE_PATH}
-RUN npm run build 2>&1 || echo "Build failed, using existing dist if available"
+RUN npm run build
 
 # Create directory for SQLite database
 RUN mkdir -p /app/data
 
-# Set database path environment variable
+# Set runtime environment variables
+ENV NODE_ENV=production
 ENV DATABASE_PATH=/app/data/ledger.db
 
 # Expose port
