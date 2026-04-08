@@ -48,6 +48,11 @@ export default function AuthPage({ onLogin }) {
     }))
   }
 
+  const handleDemoMode = () => {
+    document.cookie = "demo_mode=1; path=/; max-age=3600; SameSite=Lax"
+    onLogin({ id: 999, username: 'demo-user', role: 'user' })
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
       <div className="max-w-md w-full space-y-8">
@@ -118,14 +123,29 @@ export default function AuthPage({ onLogin }) {
             </button>
           </div>
 
-          <div className="text-center">
+          <div className="text-center space-y-4">
             <button
               type="button"
               onClick={() => setIsLogin(!isLogin)}
-              className="text-sm text-blue-600 hover:text-blue-500 underline"
+              className="text-sm text-blue-600 hover:text-blue-500 underline block w-full"
               disabled={loading}
             >
               {isLogin ? 'Need to create an account?' : 'Already have an account?'}
+            </button>
+
+            <div className="flex items-center justify-center space-x-2 py-4">
+              <div className="flex-grow border-t border-gray-300"></div>
+              <span className="text-gray-500 text-sm">OR</span>
+              <div className="flex-grow border-t border-gray-300"></div>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleDemoMode}
+              className="text-sm text-gray-600 hover:text-gray-900 font-medium py-2 px-4 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors duration-200"
+              disabled={loading}
+            >
+              Try Demo Mode (Read-Only)
             </button>
           </div>
         </form>

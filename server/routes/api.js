@@ -6,8 +6,14 @@ import { logAudit, businessLogger } from '../utils/logger.js';
 
 const router = express.Router();
 
+const getRequestDb = (req) => req.db || getDatabase();
+
 const authenticate = (req, res, next) => {
   const AUTH_MODE = process.env.AUTH_MODE || (process.env.NODE_ENV === 'production' ? 'enabled' : 'disabled');
+
+  if (req.isDemoMode) {
+    return next();
+  }
 
   if (AUTH_MODE === 'disabled') {
     req.userId = 1;
@@ -154,6 +160,9 @@ router.get('/transactions', authenticate, (req, res) => {
 
 // POST /api/transactions - Add new transaction
 router.post('/transactions', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot create transactions.' });
+  }
   try {
     const db = getRequestDb(req);
     const {
@@ -226,6 +235,9 @@ router.post('/transactions', authenticate, (req, res) => {
 
 // PUT /api/transactions/:id - Update transaction
 router.put('/transactions/:id', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot update transactions.' });
+  }
   try {
     const db = getRequestDb(req);
     const transactionId = req.params.id;
@@ -274,6 +286,9 @@ router.put('/transactions/:id', authenticate, (req, res) => {
 
 // DELETE /api/transactions/:id - Delete transaction
 router.delete('/transactions/:id', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot delete transactions.' });
+  }
   try {
     const db = getRequestDb(req);
     const transactionId = req.params.id;
@@ -321,6 +336,9 @@ router.get('/assets', authenticate, (req, res) => {
 
 // POST /api/assets - Add new asset
 router.post('/assets', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot create assets.' });
+  }
   try {
     const db = getRequestDb(req);
     const {
@@ -417,6 +435,9 @@ router.post('/assets', authenticate, (req, res) => {
 
 // PUT /api/assets/:id/sell - Mark asset as sold
 router.put('/assets/:id/sell', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot sell assets.' });
+  }
   try {
     const db = getRequestDb(req);
     const assetId = req.params.id;
@@ -464,6 +485,9 @@ router.put('/assets/:id/sell', authenticate, (req, res) => {
 
 // PUT /api/assets/:id - Update asset
 router.put('/assets/:id', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot update assets.' });
+  }
   try {
     const db = getRequestDb(req);
     const assetId = req.params.id;
@@ -548,6 +572,9 @@ router.put('/assets/:id', authenticate, (req, res) => {
 
 // DELETE /api/assets/:id - Delete asset
 router.delete('/assets/:id', authenticate, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot delete assets.' });
+  }
   try {
     const db = getRequestDb(req);
     const assetId = req.params.id;
@@ -588,6 +615,9 @@ router.get('/admin/users', authenticate, requireAdmin, (req, res) => {
 
 // POST /api/admin/users - Create new user (admin only)
 router.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot create users.' });
+  }
   try {
     const db = getRequestDb(req);
     const auth = await import('../auth/auth.js');
@@ -630,6 +660,9 @@ router.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
 
 // PUT /api/admin/users/:id/password - Reset user password (admin only)
 router.put('/admin/users/:id/password', authenticate, requireAdmin, async (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot reset passwords.' });
+  }
   try {
     const db = getRequestDb(req);
     const auth = await import('../auth/auth.js');
@@ -667,6 +700,9 @@ router.put('/admin/users/:id/password', authenticate, requireAdmin, async (req, 
 
 // PUT /api/admin/users/:id - Update user (admin only)
 router.put('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot update users.' });
+  }
   try {
     const db = getRequestDb(req);
     const userId = parseInt(req.params.id);
@@ -722,6 +758,9 @@ router.put('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
 
 // DELETE /api/admin/users/:id - Delete user (admin only)
 router.delete('/admin/users/:id', authenticate, requireAdmin, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot delete users.' });
+  }
   try {
     const db = getRequestDb(req);
     const userId = parseInt(req.params.id);
@@ -773,6 +812,9 @@ router.get('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
 
 // DELETE /api/admin/login-attempts - Clear login attempts (admin only)
 router.delete('/admin/login-attempts', authenticate, requireAdmin, (req, res) => {
+  if (req.isDemoMode) {
+    return res.status(403).json({ error: 'Demo mode is read only. Cannot clear login attempts.' });
+  }
   try {
     const db = getRequestDb(req);
     db.prepare('DELETE FROM login_attempts').run();

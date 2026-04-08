@@ -160,6 +160,10 @@ function applyMigration(db) {
 let db;
 
 export function initDatabase(dbPath = process.env.DATABASE_PATH || path.join(__dirname, '../../data/ledger.db')) {
+  if (db) {
+    logger.debug('Database already initialized, returning existing connection');
+    return db;
+  }
   try {
     // Ensure the directory exists
     const dbDir = path.dirname(dbPath);

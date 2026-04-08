@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import { initDatabase } from './database/schema.js';
+import { initDatabase, getDatabase } from './database/schema.js';
 import apiRoutes from './routes/api.js';
 import { requestCorrelationMiddleware, performanceMonitoringMiddleware, startMemoryHeartbeat } from './middleware/monitoring.js';
 import { auditMiddleware, logAuthEvent } from './middleware/audit.js';
@@ -39,6 +39,7 @@ app.use(cors());
 app.use(cookieParser());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(demoModeMiddleware);
 
 // Monitoring middleware (must be before routes)
 app.use(requestCorrelationMiddleware);
@@ -55,15 +56,15 @@ const createAdminUser = async () => {
     logger.info('Attempting to create admin user');
     try {
       const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-      // Default secure password - CHANGE THIS IMMEDIATELY AFTER FIRST LOGIN!
-      const adminPassword = 'gigledger-change-me-2026!';
+      const adminPassword = process.env.ADMIN_PASSWORD || 'gigledger-change-me-2026!';
 
-      // Keep security warnings as console.log for high visibility during startup
-      console.log(`🚨 SECURITY WARNING: Default admin password in use!`);
-      console.log(`🚨 Login with: ${adminUsername} / ${adminPassword}`);
-      console.log('🚨 Go to Admin Panel → Change Password IMMEDIATELY!');
-      console.log('🚨 NEVER use default password in production!');
-      console.log('');
+      if (!process.env.ADMIN_PASSWORD) {
+        // Warn loudly when falling back to the default password
+        console.log('SECURITY WARNING: ADMIN_PASSWORD not set in environment!');
+        console.log(`Using default password for user "${adminUsername}". Set ADMIN_PASSWORD in your .env and restart.`);
+        console.log('NEVER use the default password in production!');
+        console.log('');
+      }
 
       const existingAdmin = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
       logger.info({ existingAdmin: !!existingAdmin }, 'Admin user existence check');
@@ -131,7 +132,7 @@ const createAdminUser = async () => {
     }
 
     try {
-      const db = initDatabase();
+      const db = getDatabase();
       const { username, password } = req.body;
 
       if (!username || !password) {
@@ -262,6 +263,12 @@ const createAdminUser = async () => {
 
   // Get current user
   app.get(`${API_BASE}/auth/me`, async (req, res) => {
+    if (req.isDemoMode) {
+      return res.json({
+        user: { id: 999, username: 'demo-user', role: 'user', created_at: new Date().toISOString() }
+      });
+    }
+
     if (AUTH_MODE === 'disabled') {
       return res.json({
         user: { id: 1, username: 'default-user', role: 'user', created_at: new Date().toISOString() }

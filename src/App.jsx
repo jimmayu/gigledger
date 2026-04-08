@@ -68,6 +68,7 @@ function App() {
         method: 'POST',
         credentials: 'include'
       })
+      document.cookie = "demo_mode=; path=/; expires=Thu, 01 Jan 1970 00:00:01 GMT;"
       setUser(null)
     } catch (error) {
       console.error('Logout failed:', error)

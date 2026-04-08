@@ -12,13 +12,15 @@ cookies.txt
 *.db
 *.log
 
-# AI Memory & State (retain locally but never commit)
+# AI / editor state (local only, never commit)
 LONG_TERM_MEMORY.md
 .opencode-memory/
 .claude/
 .anthropic/
 .aider.chat.history.md
 .aider.input.history
+.aider.tags.cache.v4/
+.sisyphus/
 
 # Temporary test and development files
 stress_test.js
